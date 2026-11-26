@@ -1,6 +1,6 @@
 {
   "name": "chat-overlay-frontend",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "private": true,
   "description": "Transparent always-on-top multistream chat overlay for streamers - Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
   "keywords": [
@@ -36,9 +36,11 @@
     "build": "vite build",
     "dev": "node scripts/dev.js",
     "start": "npm run build && node electron/launch.js",
-    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && npm run build && node tests/e2e.test.js",
-    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js",
+    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node --check mobile/www/url.js && node --check mobile/www/app.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && node tests/mobile-url.test.js && npm run build && node tests/e2e.test.js && node tests/mobile-ui.test.js",
+    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node --check mobile/www/url.js && node --check mobile/www/app.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && node tests/mobile-url.test.js",
     "audit": "npm audit --audit-level=high",
+    "mobile:test": "node tests/mobile-url.test.js && node tests/mobile-ui.test.js",
+    "mobile:apk": "powershell -NoProfile -ExecutionPolicy Bypass -File mobile/build-apk.ps1",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win"
   },

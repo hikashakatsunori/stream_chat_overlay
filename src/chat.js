@@ -17,7 +17,6 @@
 
 const api = window.chatPanel;
 
-const statusEl = document.getElementById('chat-status');
 const pinBtn = document.getElementById('btn-pin');
 const transparentBtn = document.getElementById('btn-transparent');
 const frame = document.getElementById('chat-frame');
@@ -33,18 +32,59 @@ const saveUrlBtn = document.getElementById('btn-save-url');
 const changeUrlBtn = document.getElementById('btn-change-url');
 const reloadWidgetBtn = document.getElementById('btn-reload-widget');
 const clickThroughBtn = document.getElementById('btn-click-through');
+const downloadBtn = document.getElementById('btn-download');
+const notificationsEl = document.getElementById('notifications');
 
-// Status line (built with DOM APIs, never innerHTML). Hoisted as a
-// function declaration so the bridge guard below can report through it.
-function setStatus(text, live) {
-  statusEl.classList.toggle('live', Boolean(live));
-  statusEl.replaceChildren();
-  const dot = document.createElement('span');
-  dot.className = 'dot';
-  statusEl.appendChild(dot);
-  const label = document.createElement('span');
-  label.textContent = text;
-  statusEl.appendChild(label);
+// Header feedback is toast-only; there is no connection dot or status text.
+const toastTimers = new WeakMap();
+
+function dismissToast(toast) {
+  if (!toast || !toast.isConnected) return;
+  const timer = toastTimers.get(toast);
+  if (timer) clearTimeout(timer);
+  toastTimers.delete(toast);
+  toast.classList.remove('show');
+  window.setTimeout(() => {
+    if (toast.isConnected) toast.remove();
+  }, 200);
+}
+
+/** In-panel notification. DOM-built (never innerHTML), capped at 3. */
+function notify(text, kind) {
+  if (!notificationsEl) return;
+  const value = String(text || '').trim().slice(0, 260);
+  if (!value) return;
+  const level = ['info', 'success', 'warn', 'error'].includes(kind) ? kind : 'info';
+  const toast = document.createElement('div');
+  toast.className = `toast ${level}`;
+
+  const message = document.createElement('span');
+  message.className = 'toast-text';
+  message.textContent = value;
+
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'toast-close';
+  close.setAttribute('aria-label', 'Dismiss notification');
+  close.textContent = '\u00d7';
+
+  toast.append(message, close);
+  notificationsEl.appendChild(toast);
+  while (notificationsEl.children.length > 3) {
+    const oldest = notificationsEl.firstElementChild;
+    const timer = toastTimers.get(oldest);
+    if (timer) clearTimeout(timer);
+    toastTimers.delete(oldest);
+    oldest.remove();
+  }
+
+  const timer = window.setTimeout(
+    () => dismissToast(toast),
+    level === 'error' ? 8000 : 5000,
+  );
+  toastTimers.set(toast, timer);
+  close.addEventListener('click', () => dismissToast(toast));
+  window.requestAnimationFrame(() => toast.classList.add('show'));
 }
 
 // Preload bridge missing (wrong preload path, sandbox regression, dev
@@ -65,7 +105,7 @@ if (!api || typeof api.getState !== 'function') {
   } catch {
     /* already gone */
   }
-  setStatus('panel bridge unavailable — restart the app', false);
+  notify('Panel bridge unavailable — restart the app', 'error');
   throw new Error('[chat] window.chatPanel missing — aborting boot');
 }
 const viewerPills = {
@@ -88,7 +128,7 @@ async function safeInvoke(fn, label) {
     // Main process gone / window closing mid-click: never an unhandled
     // rejection — surface it in the status line and keep the UI usable.
     console.error(`[chat] ${label} failed:`, err && err.message ? err.message : err);
-    setStatus(`${label} failed — restarting the app may help`, false);
+    notify(`${label} failed — restarting the app may help`, 'error');
     return null;
   }
 }
@@ -122,24 +162,31 @@ clickThroughBtn.addEventListener('click', async () => {
   const on = await safeInvoke(() => api.toggleClickThrough(), 'mouse pass-through');
   if (on === null) return;
   renderClickThrough(on);
-  setStatus(
+  notify(
     on
-      ? 'mouse pass-through ON — Ctrl+Win+I to toggle'
-      : 'mouse pass-through off',
-    false,
+      ? 'Mouse pass-through ON — Ctrl+Win+I to toggle'
+      : 'Mouse pass-through off',
+    'info',
   );
 });
 
 document.getElementById('btn-close').addEventListener('click', () => api.close());
 
+// Opens the latest GitHub release page in the default browser; the main
+// process owns the URL (renderer cannot supply one).
+downloadBtn.addEventListener('click', async () => {
+  await safeInvoke(() => api.openReleases(), 'open downloads');
+});
+
 // ---- settings panel (gear icon) ------------------------------------------
 // First-launch flow: no saved URL → the boot setup card points here; the
 // user clicks the gear, pastes the widget URL, presses Enter. The URL is
-// validated + canonicalized by the main process (chat:save-url) and
-// stored in its local settings db; the NEXT startup reads the db and
-// loads the widget. Real-life scenarios handled: empty input, invalid
-// URL (per-code message), unchanged re-save, Change with nothing saved,
-// IPC failure, corrupt db (falls back to "no URL saved", never crashes).
+// validated + canonicalized by the main process (chat:save-url) and stored
+// in its local settings db; Reload applies it to the running panel (a full
+// restart also reads the db). Real-life scenarios handled: empty input,
+// invalid URL (per-code message), unchanged re-save, Change with nothing
+// saved, IPC failure, corrupt db (falls back to "no URL saved", never
+// crashes).
 
 let settingsOpen = false;
 
@@ -241,7 +288,7 @@ async function saveUrlFromPanel() {
       true,
     );
     showSavedRestartCard();
-    setStatus('widget url saved — reload or restart to apply', false);
+    notify('Widget URL saved — click Reload to apply', 'success');
   } else {
     const copy = SETUP_COPY[res.code];
     showSettingsMsg(
@@ -273,7 +320,7 @@ async function reloadWidgetFromPanel() {
     // Main process restarts the poller and reloads this page right after
     // the IPC reply, so the iframe binds to the just-saved URL.
     showSettingsMsg('Reloading the widget…', true);
-    setStatus('reloading widget…', false);
+    notify('Reloading the widget…', 'info');
     return;
   }
   const copy = SETUP_COPY[res.code];
@@ -301,7 +348,7 @@ const SETUP_COPY = {
     'No widget URL saved',
     [
       ['Click the gear (settings) icon in the top bar, paste your BotRix multistream widget URL, and press Enter.', false],
-      ['Then restart the app — the widget loads on the next startup.', false],
+      ['Then click Reload in the settings panel — the widget loads immediately.', false],
       ['https://botrix.live/widgets/chat/?bid=YOUR_BID', true],
     ],
   ],
@@ -416,7 +463,7 @@ window.addEventListener('beforeunload', () => {
 // broke (no silent blank), console keeps the full detail for bug reports.
 function showUnexpected(where, message) {
   console.error(`[chat:unexpected:${where}]`, message);
-  setStatus(`error (${where}) — see console, tray reopen keeps working`, false);
+  notify(`Unexpected error (${where}) — see console for details`, 'error');
 }
 window.addEventListener('error', (e) => {
   showUnexpected('renderer', (e && e.message) || 'unknown');
@@ -440,22 +487,28 @@ const offError =
 const offNotice =
   api && typeof api.onNotice === 'function'
     ? api.onNotice((p) => {
-        // Informational events (e.g. an update is ready) are not errors:
-        // show them in the status line without the failure treatment.
-        setStatus((p && p.message) || 'app notice', false);
+        // Informational events (e.g. an update is ready) are notices, not
+        // errors; show them as in-panel toasts.
+        notify((p && p.message) || 'app notice', 'info');
       })
     : null;
 const offClickThrough =
   api && typeof api.onClickThrough === 'function'
     ? api.onClickThrough((p) => {
         const on = Boolean(p && p.enabled);
+        const source = p && p.source;
         renderClickThrough(on);
-        setStatus(
-          on
-            ? 'mouse pass-through ON — Ctrl+Win+I to toggle'
-            : 'mouse pass-through off',
-          false,
-        );
+        // The header button already toasts locally; load-time syncs must be
+        // silent. Shortcut/tray changes are the ones the user cannot see
+        // otherwise (especially while pass-through is ON).
+        if (source !== 'load' && source !== 'button') {
+          notify(
+            on
+              ? 'Mouse pass-through ON — Ctrl+Win+I to toggle'
+              : 'Mouse pass-through off',
+            'info',
+          );
+        }
       })
     : null;
 
@@ -507,7 +560,6 @@ const offClickThrough =
   if (status.code !== 'ok') {
     const copy = SETUP_COPY[status.code] || SETUP_COPY.missing;
     showSetup(copy[0], copy[1]);
-    setStatus(`${copy[0].toLowerCase()} — see panel`, false);
     return;
   }
 
@@ -537,7 +589,6 @@ const offClickThrough =
       // CSP permits only https: frames; the host allowlist (mirrored from
       // the main process) blocks phishing iframes — say so instead.
       frame.src = url;
-      setStatus(`botrix multistream · ${parsed.hostname}`, true);
       // A load failure (bad bid, widget down, host refuses embedding)
       // leaves the frame blank — surface it three ways so no failure is
       // silent: (1) iframe error event, (2) 15s no-load grace timer, (3)
@@ -548,7 +599,10 @@ const offClickThrough =
         if (settled) return;
         settled = true;
         clearTimeout(loadWatch);
-        setStatus(`widget failed to load (${why}) — check the saved URL via the gear icon`, false);
+        notify(
+          `Widget failed to load (${why}) — check the saved URL via the gear icon`,
+          'error',
+        );
       };
       const loadWatch = setTimeout(() => fail('timeout'), 15000);
       frame.addEventListener('load', () => {
@@ -589,7 +643,6 @@ const offClickThrough =
       h.textContent = 'Only botrix.live widget URLs can be embedded. Click the gear icon and check for typos.';
       setupCard.appendChild(h);
       setupCard.classList.add('show');
-      setStatus('widget url not allowed — see panel', false);
     }
   } else {
     // Main-process diagnosis said ok but supplied no URL (race): generic card.
@@ -604,6 +657,5 @@ const offClickThrough =
     h.textContent = 'The app could not read the saved widget URL. Restart the app; if it persists, re-enter it via the gear icon.';
     setupCard.appendChild(h);
     setupCard.classList.add('show');
-    setStatus('no widget url configured — see panel', false);
   }
 })();

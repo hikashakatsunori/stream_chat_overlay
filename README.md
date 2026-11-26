@@ -11,6 +11,32 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 ![CI](https://github.com/hikashakatsunori/stream_chat_overlay/actions/workflows/ci.yml/badge.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
+## Download
+
+**Windows installer:** [Download the latest release](https://github.com/hikashakatsunori/stream_chat_overlay/releases/latest)
+
+The latest release contains `Hikasha-Chat-Setup-<version>.exe`, its blockmap,
+and `latest.yml` for auto-updates. The installer is currently unsigned, so
+Windows SmartScreen may ask for confirmation before installing.
+
+### What's new in 0.1.5
+
+- **Cleaner header** — removed the status dot and status text; every logo,
+  viewer, and control icon is always visible, the group is centered, and the
+  panel wraps tightly at its 380px minimum.
+- **In-panel notifications** — errors, update notices, URL-save confirmations,
+  Reload feedback, and pass-through changes appear as dismissible toasts; in
+  transparent mode they use a glass surface instead of a black card.
+- **Download button** — the new header download icon opens the latest GitHub
+  release page from inside the overlay.
+- **Streaming controls** — mouse pass-through with **Ctrl+Win+I**, tray
+  fallback, in-app Reload, tray hide/show, and viewer-count hydration.
+- **Android companion** — a standalone Capacitor APK with setup/tutorial/chat
+  and no desktop-only overlay, pin, tray, or mouse-pass-through features.
+- **Hardened release pipeline** — Electron 44.11.6, URL-safe installer names,
+  matching `latest.yml`, high/critical audit gate, and full Windows/mobile
+  test coverage.
+
 ## Features
 
 - **Multistream chat** — Twitch, YouTube, and Kick in a single scroll,
@@ -28,6 +54,8 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 - **Mouse pass-through mode** — the pointer button makes the panel ignore the
   mouse so clicks and hover reach the game underneath; toggle it from the
   panel, the tray, or the OS-global **Ctrl+Win+I** shortcut.
+- **Android companion** — a standalone signed APK with a mobile setup/tutorial
+  and chat screen; no overlay, pin, tray, or pass-through features.
 - **Tray application** — no taskbar button; Show/Hide, Reload, Mouse
   pass-through, and Quit from the tray icon.
 - **In-app setup** — no config files to edit: enter your widget URL once via the
@@ -49,6 +77,8 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 - Windows 10/11
 - [Node.js](https://nodejs.org) 22.12 or later (for running from source;
   matches `engines` and the Electron 44 toolchain)
+- To build the Android APK: JDK 21 and Android SDK 36. The APK itself needs
+  none of these on the phone.
 - A free [BotRix](https://botrix.live) account with Twitch, YouTube,
   and Kick connected
 
@@ -120,9 +150,24 @@ non-https, wrong host, invalid characters).
 | Gear button | Widget URL settings: enter / change / reload the BotRix widget URL |
 | Settings Reload | Apply the saved URL and reload the widget immediately |
 | Pointer button | Turn mouse pass-through on: clicks/hover go to the game, not the panel |
+| Download button | Open the latest GitHub release page in your browser |
 | Ctrl+Win+I | Toggle mouse pass-through from anywhere, including while a game is focused |
 | Close button | Quit the application |
 | Tray icon | Show/Hide panel (hide keeps the chat session alive), Reload chat panel, Mouse pass-through, Quit |
+
+### Header and notifications
+
+The header always shows the logo/title, all three viewer icons
+(Twitch/YouTube/Kick, starting at 0 before the first poll), and every control
+button. The icon groups sit together with a small gap, and the whole group is
+centered: widening the panel adds equal space on both sides. At the tightest
+minimum width, oversized viewer numbers ellipsize while every icon stays
+visible. There is no status text or status dot in the header.
+Errors, update notices, URL-save confirmations, Reload feedback, and
+pass-through changes appear as dismissible in-panel notifications; in
+transparent mode those notifications use a glass surface instead of a solid
+background. The panel has a minimum width that fits the full header, so it
+cannot be resized small enough to hide the left side.
 
 ### Mouse pass-through
 
@@ -136,6 +181,33 @@ pass-through means the panel no longer receives it, so the game does.
 
 Window position, size, pin state, and theme persist between sessions in
 `%AppData%/Hikasha Chat/overlay-state.json`.
+
+## Android App
+
+A standalone Android build lives in `mobile/` and produces:
+
+```text
+release/Hikasha-Chat-0.1.1.apk
+release/Hikasha-Chat-0.1.1.apk.sha256
+```
+
+It is a self-contained WebView app: paste your BotRix chat link once, and it
+remembers it on the phone. It has a mobile setup/tutorial screen, a full-screen
+chat view, link change/reload/disconnect, and no Windows-only features
+(overlay, pin, tray, mouse pass-through).
+
+- **Install:** copy the APK to the phone, allow "Install unknown apps" for the
+  file manager, tap Install, open the app.
+- **BotRix link:** sign in at `botrix.live`, link Twitch/YouTube/Kick, open
+  Widgets → Chat, copy the widget link (must contain `?bid=`), paste it into
+  the app, and tap Connect.
+- **Play Protect:** the APK is signed with a self-signed release certificate.
+  Android accepts it; Play Protect can still show an unknown-developer warning.
+  Tap More details → Install anyway after checking the SHA-256. Removing that
+  warning entirely requires Play Store distribution; there is no legitimate
+  bypass.
+- **Full guide:** see [`mobile/README.md`](mobile/README.md).
+- **Build:** `npm run mobile:apk` (JDK 21 + Android SDK 36 required).
 
 ## Uninstall & Portability
 
@@ -161,6 +233,8 @@ npm run dev       # Vite dev server + Electron with HMR
 npm test          # syntax checks + unit + property + behavioral tests + build + E2E
 npm run lint      # syntax checks + unit/property/behavioral tests (no build)
 npm run audit     # dependency gate: high/critical advisories fail
+npm run mobile:test  # mobile URL rules + phone-viewport UI flow
+npm run mobile:apk   # build/sign the Android APK (JDK 21 + SDK 36)
 npm run dist:win  # Windows NSIS installer, output to release/
 ```
 
@@ -181,6 +255,10 @@ Test layers:
   against an isolated userData dir and drives the actual UI: first-run
   setup card, settings Escape/focus flow, save + in-app Reload, restart-load,
   pin/theme persistence, and X-button termination.
+- **Mobile** (`tests/mobile-url.test.js`, `tests/mobile-ui.test.js`) — BotRix
+  URL rules plus a phone-viewport Chromium flow: first-run tutorial, all
+  validation errors, save/restore, link change, disconnect, and absence of
+  desktop-only controls.
 
 | Path | Responsibility |
 | --- | --- |
@@ -189,6 +267,9 @@ Test layers:
 | `electron/chat-preload.js` | Minimal IPC bridge exposed to the renderer |
 | `electron/launch.js` | Process launcher (strips `ELECTRON_RUN_AS_NODE`) |
 | `scripts/dev.js` | Dev runner: Vite dev server + Electron with HMR |
+| `mobile/` | Standalone Capacitor Android app (setup/tutorial/chat; no desktop features) |
+| `mobile/www/` | Mobile web UI + BotRix URL rules (`url.js`) |
+| `mobile/android/` | Capacitor Android project, icons/splash, cookies, signing config |
 | `src/chat.js`, `chat.html` | Panel UI, setup card, settings panel, error display |
 | `splash.html` | Startup splash screen |
 | `tests/state-utils.test.js` | Unit test suite (must remain green) |

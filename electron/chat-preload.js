@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('chatPanel', {
   /** Apply the saved URL now: restarts the poller and reloads the panel. */
   reloadWidget: () => ipcRenderer.invoke('chat:reload-widget'),
 
+  /** Open the latest GitHub release/download page in the default browser. */
+  openReleases: () => ipcRenderer.invoke('chat:open-releases'),
+
   /** Machine-readable config diagnosis: { code, url, bid }. */
   getConfigStatus: () => ipcRenderer.invoke('chat:get-config-status'),
 

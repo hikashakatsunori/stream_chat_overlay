@@ -23,6 +23,7 @@ const {
   Menu,
   nativeImage,
   globalShortcut,
+  shell,
 } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
@@ -65,6 +66,17 @@ const APP_ID = 'live.botrix.chat-overlay';
 // accelerator token (it silently degrades to Ctrl+I). This is deliberately
 // OS-global so it works while a game has focus.
 const CLICK_THROUGH_ACCELERATOR = 'Control+Super+I';
+
+// Public downloads. Kept as a fixed constant (never renderer-supplied) and
+// mirrored in the README; the header's download button opens this page.
+const RELEASES_URL =
+  'https://github.com/hikashakatsunori/stream_chat_overlay/releases/latest';
+
+// The header now always shows the logo, all three viewer icons, and all six
+// controls. The minimum is exactly the width that wraps that content tightly
+// (no permanent right-side gap); wider panels center the group. Viewer counts
+// may ellipsize at the minimum, but no icon can ever be clipped or hidden.
+const MIN_PANEL_WIDTH = 380;
 
 const chatState = {
   x: null,
@@ -444,7 +456,7 @@ function createChatWindow(opts = {}) {
   const { hidden = false } = opts;
   const display = screen.getPrimaryDisplay();
 
-  const w = Math.max(240, Math.round(chatState.w));
+  const w = Math.max(MIN_PANEL_WIDTH, Math.round(chatState.w));
   const h = Math.max(320, Math.round(chatState.h));
   let x;
   let y;
@@ -470,7 +482,7 @@ function createChatWindow(opts = {}) {
   chatWin = new BrowserWindow({
     width: w,
     height: h,
-    minWidth: 240,
+    minWidth: MIN_PANEL_WIDTH,
     minHeight: 320,
     // Same envelope the state sanitizer clamps to (state-utils): the user
     // can never resize beyond what the next boot would restore.
@@ -1350,6 +1362,14 @@ function registerIpc() {
   guarded('chat:toggle-click-through', () =>
     setClickThrough(!chatState.clickThrough, 'button'),
   );
+
+  // Download button: open the project's latest GitHub release in the user's
+  // default browser. The URL is a constant, so the renderer cannot coerce
+  // this privileged opener into arbitrary navigation.
+  guarded('chat:open-releases', async () => {
+    await shell.openExternal(RELEASES_URL);
+    return true;
+  });
 
   // The BotRix widget URL for the panel's iframe (from the settings db).
   guarded('chat:get-widget-url', () => getBotrixWidgetUrl());

@@ -26,6 +26,7 @@ const ipcListeners = new Map();
 const createdChatWindows = [];
 const registeredShortcuts = [];
 const shortcutCallbacks = new Map();
+const openedExternal = [];
 
 const stubElectron = {
   app: {
@@ -57,6 +58,11 @@ const stubElectron = {
     destroy() {}
   },
   Menu: { buildFromTemplate: () => ({}) },
+  shell: {
+    openExternal: async (url) => {
+      openedExternal.push(url);
+    },
+  },
   globalShortcut: {
     register: (accelerator, callback) => {
       registeredShortcuts.push(accelerator);
@@ -202,11 +208,30 @@ async function main() {
     assert.equal(typeof ipcHandlers.get('chat:reload-widget'), 'function');
     assert.equal(typeof ipcHandlers.get('chat:get-state'), 'function');
     assert.equal(typeof ipcHandlers.get('chat:toggle-click-through'), 'function');
+    assert.equal(typeof ipcHandlers.get('chat:open-releases'), 'function');
     // Ctrl+Win+I is Electron's Control+Super+I; registration is required
     // for the mode to be recoverable while the mouse is ignored.
     assert.ok(registeredShortcuts.includes('Control+Super+I'));
     assert.equal(typeof shortcutCallbacks.get('Control+Super+I'), 'function');
+    // The header must never hide its logo/viewer/action icons: the window
+    // is created at (and cannot shrink below) the minimum fitting width.
+    const win = createdChatWindows[0];
+    assert.ok(win, 'panel window created');
+    assert.equal(win.opts.minWidth, 380);
+    assert.ok(win.opts.width >= 380);
   });
+
+  // Download button: the main process (not the renderer) owns the URL.
+  await (async () => {
+    openedExternal.length = 0;
+    const ok = await ipcHandlers.get('chat:open-releases')(panelEvent());
+    assert.equal(ok, true);
+    assert.deepEqual(openedExternal, [
+      'https://github.com/hikashakatsunori/stream_chat_overlay/releases/latest',
+    ]);
+  })();
+  n += 1;
+  console.log(`ok ${n} - download button opens the fixed GitHub releases URL`);
 
   await (async () => {
     await settle();
@@ -315,6 +340,7 @@ async function main() {
     await assert.rejects(() => ipcHandlers.get('chat:get-viewers')({ senderFrame: null }));
     await assert.rejects(() => ipcHandlers.get('chat:reload-widget')({ senderFrame: null }));
     await assert.rejects(() => ipcHandlers.get('chat:toggle-click-through')({ senderFrame: null }));
+    await assert.rejects(() => ipcHandlers.get('chat:open-releases')({ senderFrame: null }));
     await assert.rejects(() => ipcHandlers.get('chat:get-state')({ senderFrame: null }));
   })();
   n += 1;

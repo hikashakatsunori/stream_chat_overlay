@@ -33,6 +33,8 @@ app data into `<exe dir>/app-data`.
 | `npm run lint` | Syntax checks + unit + property + behavioral tests (no build/E2E). |
 | `npm test` | Full gate: lint layers + production build + Playwright Electron E2E. |
 | `npm run audit` | Dependency gate: fails on high/critical advisories. |
+| `npm run mobile:test` | Mobile URL rules + phone-viewport UI flow. |
+| `npm run mobile:apk` | Build/sign/verify the standalone Android APK (JDK 21 + SDK 36). |
 | `npm run dist:win` | Windows NSIS installer into `release/`. |
 
 Definition of done for any change: `npm run lint` and `npm test` both pass;
@@ -47,6 +49,9 @@ public behavior changes update `README.md` and `CHANGELOG.md`.
 | `electron/chat-preload.js` | Minimal contextBridge API; exposes the bridge ONLY to the panel's top frame. |
 | `electron/launch.js` | Launcher that strips `ELECTRON_RUN_AS_NODE`. |
 | `scripts/dev.js` | Dev runner: Vite server + Electron, no extra dependencies. |
+| `mobile/` | Standalone Capacitor 8 Android app: setup/tutorial/chat UI, local link storage, release-signed APK. |
+| `mobile/www/url.js` | Mobile BotRix URL allowlist/canonicalization; browser + Node dual module. |
+| `mobile/android/` | Generated Capacitor Android project (icons, cookies, manifest, signing). |
 | `src/chat.js` | Panel renderer: header chrome, settings card, viewer pills, error/notice display, iframe load watch. |
 | `chat.html`, `splash.html` | Static pages with CSPs; Vite multi-page build inputs. |
 | `tests/state-utils.test.js` | Unit tests + cross-layer wiring assertions. |
@@ -105,6 +110,18 @@ Runtime data (`%AppData%/Hikasha Chat` by default):
     `Control+Super+I` (= Ctrl+Win+I) shortcut is registered on ready and
     released on `will-quit`; the tray checkbox is the permanent fallback
     because the panel cannot be clicked while ON. Re-apply on create/show.
+15. **Android is a separate, mobile-only surface.** `mobile/www` must not
+    contain desktop-only features (overlay dragging, pin, tray, mouse
+    pass-through) or a second URL allowlist. `mobile/www/url.js` is the
+    mobile validator and is covered by Node tests. The release keystore and
+    `keystore.properties` are git-ignored, never committed, and must be
+    backed up for future APK updates.
+16. **Full header is always visible.** No header control or viewer icon may
+    be hidden by a resize breakpoint. The panel minimum width
+    (`MIN_PANEL_WIDTH`, 380) wraps the logo, all viewer pills, and all six
+    controls tightly; wider panels center the group. Oversized viewer counts
+    may ellipsize, but icons never disappear; feedback lives in toasts, not a
+    header status dot/text.
 
 ## Testing expectations
 
@@ -116,6 +133,9 @@ Runtime data (`%AppData%/Hikasha Chat` by default):
   persistence, close-path patterns already exist).
 - E2E and behavioral tests must use an isolated `OVERLAY_USER_DATA` /
   temp dir; never touch the real user profile.
+- Mobile changes run `npm run mobile:test`; APK changes also require
+  `npm run mobile:apk` (signature + checksum verification). The mobile URL
+  rules and Android `versionName` have their own unit assertions.
 
 ## Release / development lifecycle
 

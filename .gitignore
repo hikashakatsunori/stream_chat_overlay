@@ -21,6 +21,10 @@ overlay-state.json
 *.key
 *.p12
 *.pfx
+*.jks
+*.keystore
+mobile/keystore/
+mobile/keystore.properties
 .npmrc
 
 # logs & OS noise

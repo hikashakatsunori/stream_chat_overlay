@@ -36,9 +36,15 @@ jobs:
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE=".github/release-notes/${GITHUB_REF_NAME}.md"
+          if [ -f "$NOTES_FILE" ]; then
+            NOTES_ARGS=(--notes-file "$NOTES_FILE")
+          else
+            NOTES_ARGS=(--generate-notes)
+          fi
           gh release create "${GITHUB_REF_NAME}" \
             --title "Hikasha Chat v${VERSION}" \
-            --generate-notes \
+            "${NOTES_ARGS[@]}" \
             "release/Hikasha-Chat-Setup-${VERSION}.exe" \
             "release/Hikasha-Chat-Setup-${VERSION}.exe.blockmap" \
             "release/latest.yml"

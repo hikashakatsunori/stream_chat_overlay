@@ -57,39 +57,109 @@ async function main() {
   assert.equal(await win.textContent('#setup-card .t'), 'No widget URL saved');
   t('first run shows the setup card pointing at the gear icon');
 
-  // 2. mouse pass-through control exists and is off on a fresh profile.
-  // (The OS-global registration itself is covered by the behavioral test;
-  // asserting it here would make E2E depend on the host's hotkey table.)
-  assert.equal(await win.isVisible('#btn-click-through'), true);
-  assert.equal(await win.getAttribute('#btn-click-through', 'aria-pressed'), 'false');
-  t('mouse pass-through button is present and off by default');
-
-  // 3. minimum-size window: header controls and settings buttons stay
-  // reachable (the third settings button must wrap, not clip).
+  // 2. no status dot; all header icons are visible; notices use toasts.
+  assert.equal(await win.locator('#chat-status').count(), 0);
+  assert.equal(await win.isVisible('#chat-header .title .label'), true);
+  assert.equal(await win.isVisible('#viewer-counts'), true);
   await app.evaluate(({ BrowserWindow }) => {
     const panel = BrowserWindow.getAllWindows().find((w) =>
       w.webContents.getURL().includes('chat.html'),
     );
-    if (panel) panel.setSize(240, 320);
+    if (panel) {
+      panel.webContents.send('chat:notice', {
+        where: 'e2e',
+        message: 'Test notification',
+      });
+    }
   });
-  await new Promise((r) => setTimeout(r, 400));
+  await win.waitForSelector('.toast.show', { timeout: 5000 });
+  assert.equal((await win.textContent('.toast .toast-text')).trim(), 'Test notification');
+  await win.click('.toast .toast-close');
+  await win.waitForFunction(() => !document.querySelector('.toast'));
+  t('no status dot; header icons stay visible; notices use in-panel toasts');
+
+  // 3. mouse pass-through control exists and is off on a fresh profile.
+  // (The OS-global registration itself is covered by the behavioral test;
+  // asserting it here would make E2E depend on the host's hotkey table.)
+  assert.equal(await win.isVisible('#btn-click-through'), true);
+  assert.equal(await win.getAttribute('#btn-click-through', 'aria-pressed'), 'false');
+  assert.equal(await win.isVisible('#btn-download'), true);
+  t('mouse pass-through button is present and off by default');
+
+  // 4. the window cannot shrink below the width that wraps the header
+  // tightly; wide panels center the group and no icon is ever hidden.
+  await app.evaluate(({ BrowserWindow }) => {
+    const panel = BrowserWindow.getAllWindows().find((w) =>
+      w.webContents.getURL().includes('chat.html'),
+    );
+    if (panel) {
+      // Worst-case counts: icons must survive even when the numbers are
+      // wider than the available pills.
+      panel.webContents.send('chat:viewers', {
+        total: 1234567,
+        twitch: 1234567,
+        youtube: 7654321,
+        kick: 9999999,
+        error: false,
+        stale: false,
+      });
+      panel.setSize(240, 320); // must be clamped to the minimum
+    }
+  });
+  await new Promise((r) => setTimeout(r, 500));
   const layout = await win.evaluate(() => {
     const panel = document.getElementById('chat-panel').getBoundingClientRect();
-    const buttons = ['btn-transparent', 'btn-pin', 'btn-click-through', 'btn-settings', 'btn-close'].map((id) => {
+    const actions = document.querySelector('.header-actions').getBoundingClientRect();
+    const label = document.querySelector('#chat-header .title .label');
+    const viewer = document.getElementById('viewer-counts');
+    const pills = [...document.querySelectorAll('#viewer-counts .vc')].map((el) => {
+      const r = el.getBoundingClientRect();
+      const icon = el.querySelector('svg').getBoundingClientRect();
+      return { width: r.width, right: r.right, iconWidth: icon.width };
+    });
+    const buttons = ['btn-transparent', 'btn-pin', 'btn-click-through', 'btn-download', 'btn-settings', 'btn-close'].map((id) => {
       const r = document.getElementById(id).getBoundingClientRect();
       return { id, right: r.right };
     });
-    const title = document.querySelector('#chat-header .title');
+    const close = document.getElementById('btn-close').getBoundingClientRect();
+    const title = document.querySelector('#chat-header .title').getBoundingClientRect();
     return {
+      innerWidth: window.innerWidth,
+      panelLeft: panel.left,
       panelRight: panel.right,
+      actionsLeft: actions.left,
+      titleLeft: title.left,
+      closeRight: close.right,
+      labelVisible: getComputedStyle(label).display !== 'none',
+      viewerVisible: getComputedStyle(viewer).display !== 'none',
+      pills,
       buttons,
-      titleHidden: getComputedStyle(title).display === 'none',
+      hasStatusDot: Boolean(document.getElementById('chat-status')),
     };
   });
-  for (const b of layout.buttons) {
-    assert.ok(b.right <= layout.panelRight + 0.5, `${b.id} clipped at 240px`);
+  assert.ok(layout.innerWidth >= 370, `window did not clamp to the minimum: ${layout.innerWidth}`);
+  assert.equal(layout.hasStatusDot, false);
+  assert.equal(layout.labelVisible, true);
+  assert.equal(layout.viewerVisible, true);
+  assert.equal(layout.pills.length, 3);
+  for (const p of layout.pills) {
+    assert.ok(p.width > 0, 'viewer pill hidden');
+    assert.ok(p.iconWidth > 0, 'viewer icon hidden');
+    assert.ok(p.right <= layout.actionsLeft + 0.5, 'viewer pill overlaps controls');
   }
-  assert.equal(layout.titleHidden, true);
+  assert.ok(layout.titleLeft >= layout.panelLeft, 'title clipped on the left');
+  for (const b of layout.buttons) {
+    assert.ok(b.right <= layout.panelRight + 0.5, `${b.id} clipped at minimum width`);
+  }
+  const lastPillRight = layout.pills[layout.pills.length - 1].right;
+  assert.ok(
+    layout.actionsLeft - lastPillRight <= 12,
+    `control group gap is too wide: ${layout.actionsLeft - lastPillRight}px`,
+  );
+  assert.ok(
+    Math.abs((layout.titleLeft - layout.panelLeft) - (layout.panelRight - layout.closeRight)) <= 2.5,
+    'header group is not centered at minimum width',
+  );
   await win.click('#btn-settings');
   await win.waitForSelector('#settings-panel.show', { timeout: 5000 });
   const buttonLayout = await win.evaluate(() => {
@@ -108,25 +178,49 @@ async function main() {
     const panel = BrowserWindow.getAllWindows().find((w) =>
       w.webContents.getURL().includes('chat.html'),
     );
-    if (panel) panel.setSize(340, 480);
+    if (panel) panel.setSize(520, 480);
   });
   await new Promise((r) => setTimeout(r, 400));
   const wideLayout = await win.evaluate(() => {
-    const panel = document.getElementById('chat-panel').getBoundingClientRect();
-    const buttons = ['btn-transparent', 'btn-pin', 'btn-click-through', 'btn-settings', 'btn-close'].map((id) => {
-      const r = document.getElementById(id).getBoundingClientRect();
-      return { id, right: r.right };
-    });
     const label = document.querySelector('#chat-header .title .label');
-    return { panelRight: panel.right, buttons, labelHidden: getComputedStyle(label).display === 'none' };
+    const viewer = document.getElementById('viewer-counts');
+    const panel = document.getElementById('chat-panel').getBoundingClientRect();
+    const actions = document.querySelector('.header-actions').getBoundingClientRect();
+    const title = document.querySelector('#chat-header .title').getBoundingClientRect();
+    const close = document.getElementById('btn-close').getBoundingClientRect();
+    const pills = [...document.querySelectorAll('#viewer-counts .vc')];
+    const lastPill = pills[pills.length - 1].getBoundingClientRect();
+    return {
+      innerWidth: window.innerWidth,
+      labelVisible: getComputedStyle(label).display !== 'none',
+      viewerVisible: getComputedStyle(viewer).display !== 'none',
+      panelLeft: panel.left,
+      panelRight: panel.right,
+      titleLeft: title.left,
+      closeRight: close.right,
+      actionsLeft: actions.left,
+      lastPillRight: lastPill.right,
+      hasStatusDot: Boolean(document.getElementById('chat-status')),
+    };
   });
-  for (const b of wideLayout.buttons) {
-    assert.ok(b.right <= wideLayout.panelRight + 0.5, `${b.id} clipped at 340px`);
-  }
-  assert.equal(wideLayout.labelHidden, true);
-  t('minimum-size windows keep header and settings controls reachable');
+  assert.ok(wideLayout.innerWidth >= 500);
+  assert.equal(wideLayout.labelVisible, true);
+  assert.equal(wideLayout.viewerVisible, true);
+  assert.equal(wideLayout.hasStatusDot, false);
+  assert.ok(
+    wideLayout.actionsLeft - wideLayout.lastPillRight <= 12,
+    'wide window gap between icon groups is too large',
+  );
+  assert.ok(
+    Math.abs(
+      (wideLayout.titleLeft - wideLayout.panelLeft) -
+        (wideLayout.panelRight - wideLayout.closeRight),
+    ) <= 2.5,
+    'header group is not centered when the panel is widened',
+  );
+  t('minimum width wraps the header; wider panels center the icon group');
 
-  // 4. pin + theme toggles update the UI and persist to disk
+  // 5. pin + theme toggles update the UI and persist to disk
   assert.equal(
     await win.evaluate(() =>
       document.getElementById('btn-pin').classList.contains('active'),
@@ -166,7 +260,7 @@ async function main() {
   assert.equal(savedState.chat.transparent, false);
   t('pin/theme toggles update the panel and persist to overlay-state.json');
 
-  // 5. gear opens the settings panel; Escape closes it and restores focus
+  // 6. gear opens the settings panel; Escape closes it and restores focus
   await win.click('#btn-settings');
   await win.waitForSelector('#settings-panel.show', { timeout: 5000 });
   await win.press('#settings-url', 'Escape');
@@ -179,20 +273,20 @@ async function main() {
   );
   t('gear opens the settings panel; Escape closes it and restores focus');
 
-  // 6. reopen; empty field + Enter → the exact first-run error
+  // 7. reopen; empty field + Enter → the exact first-run error
   await win.click('#btn-settings');
   await win.waitForSelector('#settings-panel.show', { timeout: 5000 });
   await win.click('#btn-save-url');
   assert.match(await win.textContent('#settings-msg'), /Enter a BotRix widget URL first/);
   t('saving an empty field shows the exact error');
 
-  // 7. invalid URL + Enter → per-code rejection
+  // 8. invalid URL + Enter → per-code rejection
   await win.fill('#settings-url', 'http://botrix.live/?bid=X');
   await win.click('#btn-save-url');
   assert.match(await win.textContent('#settings-msg'), /not saved/i);
   t('invalid URL is rejected with its code message');
 
-  // 8. valid URL + Enter → canonicalized + persisted to the settings db
+  // 9. valid URL + Enter → canonicalized + persisted to the settings db
   await win.fill('#settings-url', 'https://botrix.live/widgets/chat/?bid=E2EBID1&theme=default');
   await win.press('#settings-url', 'Enter');
   assert.match(await win.textContent('#settings-msg'), /Saved/);
@@ -204,7 +298,7 @@ async function main() {
   assert.equal(cfg.widgetUrl, 'https://botrix.live/widgets/chat/?bid=E2EBID1');
   t('valid URL is canonicalized and persisted to the settings db');
 
-  // 9. Reload applies the saved URL immediately — no app restart
+  // 10. Reload applies the saved URL immediately — no app restart
   await win.evaluate(() => document.getElementById('btn-reload-widget').click());
   await win.waitForFunction(
     () => {
@@ -220,7 +314,7 @@ async function main() {
   assert.equal(await win.isVisible('#setup-card'), false);
   t('Reload applies the saved URL and reloads the widget without a restart');
 
-  // 10. Change loads the saved URL back into the field
+  // 11. Change loads the saved URL back into the field
   await win.click('#btn-settings');
   await win.waitForSelector('#settings-panel.show', { timeout: 5000 });
   await win.fill('#settings-url', '');
@@ -231,7 +325,7 @@ async function main() {
   );
   t('Change button loads the saved URL into the field');
 
-  // 11. Escape closes the settings panel
+  // 12. Escape closes the settings panel
   await win.press('#settings-url', 'Escape');
   await win.waitForFunction(
     () => !document.getElementById('settings-panel').classList.contains('show'),
@@ -241,7 +335,7 @@ async function main() {
   await app.close();
   app = null;
 
-  // 12. restart: saved URL and persisted pin/theme are restored
+  // 13. restart: saved URL and persisted pin/theme are restored
   app = await launch();
   const win2 = await panelWindow(app);
   await panelReady(win2);
@@ -267,7 +361,7 @@ async function main() {
   );
   t('restart restores the saved URL, theme, and pin state');
 
-  // 13. the X button quits the ENTIRE app (no survivors)
+  // 14. the X button quits the ENTIRE app (no survivors)
   let exited = false;
   app.process().once('exit', () => {
     exited = true;

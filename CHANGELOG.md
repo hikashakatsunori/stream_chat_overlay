@@ -6,6 +6,68 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.1.5] — 2026-11-26
+
+### Added
+
+- Header download button that opens the latest GitHub release page in the
+  default browser (fixed URL, main-process owned).
+
+### Changed
+
+- Minimum panel width reduced from 460px to 380px — the width that wraps the
+  logo, viewer icons, and all six controls tightly with no fixed empty band
+  on the right.
+- The header icon group is centered horizontally; widening the panel adds
+  space equally on both sides instead of leaving it all on the right.
+- Viewer count text may ellipsize when space is tight; the three viewer icons
+  and all control icons remain visible at every allowed size.
+
+## [0.1.4] — 2026-11-26
+
+### Fixed
+
+- Transparent-mode notifications now use the same translucent glass surface
+  as the panel instead of a solid black background.
+
+### Changed
+
+- Header icon groups are compact: the control icons sit directly after the
+  viewer pills with the normal 5px gap instead of being pushed to the far
+  right, removing the wide empty band in larger panels.
+
+## [0.1.3] — 2026-11-26
+
+### Changed
+
+- Removed the connection dot from the header entirely. There is no status
+  text or dot in the top bar; errors, notices, and action feedback are
+  in-panel toast notifications only.
+- All header icons are always visible: the logo/title, Twitch/YouTube/Kick
+  viewer pills (showing 0 before the first poll), and every control button.
+  Resize breakpoints that hid them were removed.
+
+### Fixed
+
+- The panel now has a 460px minimum width (and is created at that width when
+  restoring an older, narrower size), so the window cannot be resized small
+  enough to hide or clip the left-side header content.
+
+## [0.1.2] — 2026-11-26
+
+### Changed
+
+- Header status is now a single dot (green live, amber connecting, red
+  failure, grey idle). Status text no longer appears in the header; errors,
+  update notices, and action feedback use in-panel toast notifications.
+- Header controls are right-anchored, so hiding the title/viewer pills while
+  resizing no longer makes the icon row jump left.
+
+### Fixed
+
+- Status dot remains visible at the 240px minimum width, and the setup/
+  settings cards scroll and wrap long widget URLs instead of clipping.
+
 ## [0.1.1] — 2026-11-26
 
 ### Added
@@ -17,6 +79,11 @@ All notable changes to this project are documented here. Format follows
   shortcut, and a tray fallback toggle a persisted mode where the panel
   ignores mouse input and keyboard focus, so gameplay receives every click
   and hover. Re-applied on show and restart.
+- Standalone Android app (`mobile/`): Capacitor 8 WebView APK with a mobile
+  setup/tutorial and chat screen, local link persistence, change/reload/
+  disconnect, strict BotRix URL validation, no desktop overlay/pin/tray/
+  pass-through features. Release-signed APK plus SHA-256 and install/Play
+  Protect guidance.
 - Viewer-count hydration: the latest payload is cached and exposed via
   `chat:get-viewers`, so the header is correct immediately after load,
   reload, or a tray show instead of waiting up to 30 s.

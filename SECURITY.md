@@ -22,6 +22,22 @@ project paths); the only fix is a breaking downgrade of the packager, so
 the gate deliberately ignores moderate findings. Electron itself is pinned
 to a release outside the certificate advisory range.
 
+## Android APK
+
+- The standalone APK is release-signed (APK Signature Scheme v2/v3) with a
+  project-held self-signed key; the key and password files are git-ignored.
+  Verify the published certificate SHA-256 before installing.
+- Android cloud backup is disabled for the app, so the private `?bid=` link is
+  not included in normal backups. It is stored only in the WebView's local
+  storage.
+- Permissions are limited to `INTERNET` and `ACCESS_NETWORK_STATE`; cleartext
+  HTTP is disabled and BotRix is embedded only over HTTPS. Third-party cookies
+  are enabled only for the WebView so the BotRix iframe session works.
+- Play Protect may warn about any app installed outside Google Play. A
+  self-signed release APK cannot legitimately remove that reputation check;
+  users should verify the SHA-256 and choose Install anyway. Play Store
+  distribution is the only way to remove the unknown-developer warning.
+
 ## Security Model
 
 Hikasha Chat embeds the BotRix multistream widget (remote code) in a

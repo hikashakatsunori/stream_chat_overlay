@@ -39,7 +39,6 @@
         box-shadow: none;
       }
       body:not(.opaque) #chat-header .title { color: #ffffff; text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
-      body:not(.opaque) #chat-status { color: rgba(255, 255, 255, 0.85); text-shadow: 0 1px 3px rgba(0,0,0,0.7); }
       body:not(.opaque) .hbtn { color: #ffffff; }
       body:not(.opaque) .hbtn:hover { background: rgba(255, 255, 255, 0.14); color: #ffffff; }
       body:not(.opaque) .hbtn.active { background: var(--claude-accent); color: #fff7f2; }
@@ -81,7 +80,7 @@
 
       /* header: drag handle + status + buttons */
       #chat-header {
-        display: flex; align-items: center; gap: 5px;
+        display: flex; align-items: center; justify-content: center; gap: 5px;
         padding: 10px 10px 8px;
         -webkit-app-region: drag;
         cursor: default;
@@ -92,53 +91,56 @@
         color: var(--claude-ink);
         font-size: 12.5px; font-weight: 600;
         white-space: nowrap;
-        flex: 0 1 auto; min-width: 0; overflow: hidden;
+        flex: 0 0 auto;
       }
       #chat-header .title .heart { color: var(--claude-accent); font-size: 12px; }
       /* viewer counts: one pill per platform behind the title, each with
          its library icon + count; hidden until first data; hover shows
          the platform name */
       #viewer-counts {
-        display: none; /* shown once the first count arrives */
+        display: inline-flex; /* viewer icons are always visible, even at 0 */
         align-items: center; gap: 4px;
         white-space: nowrap;
         flex: 0 1 auto; min-width: 0; overflow: hidden;
       }
       #viewer-counts .vc {
         display: inline-flex; align-items: center; gap: 3px;
+        flex: 0 1 auto; min-width: 0;
         font-size: 10.5px; font-weight: 600;
         color: var(--claude-ink-soft);
         background: rgba(61, 57, 41, 0.08);
         border-radius: 8px;
         padding: 2px 5px;
       }
+      #viewer-counts .vc .n {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
       #viewer-counts .vc svg {
         width: 11px; height: 11px;
         display: block;
+        flex: none;
       }
       #viewer-counts .vc.live { color: #7dbb6a; background: rgba(125, 187, 106, 0.14); }
       #viewer-counts.stale { opacity: 0.55; }
       #viewer-counts.stale .vc.live { color: inherit; background: rgba(61, 57, 41, 0.08); }
       body:not(.opaque) #viewer-counts .vc { color: rgba(255,255,255,0.9); background: rgba(255,255,255,0.12); }
       body:not(.opaque) #viewer-counts .vc.live { color: #b5e6a6; background: rgba(255,255,255,0.16); }
-      #chat-status {
-        flex: 1; min-width: 0;
-        color: var(--claude-ink-soft);
-        font-size: 11px;
-        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        text-align: right;
+      /* Connection state is intentionally not shown in the header: toasts
+         carry all feedback. The header keeps every icon visible at all times. */
+      /* Compact control group: sits immediately after the viewer icons with
+         the normal header gap. No auto-spacer, so a wide window does not
+         leave a large empty band between the two icon groups. */
+      .header-actions {
+        display: flex; align-items: center; gap: 5px;
+        flex: none;
         -webkit-app-region: no-drag;
       }
       .hbtn:focus-visible {
         outline: 2px solid var(--claude-accent);
         outline-offset: 2px;
       }
-      #chat-status .dot {
-        display: inline-block; width: 7px; height: 7px;
-        border-radius: 50%; margin-right: 5px; vertical-align: 1px;
-        background: #b0a892; transition: background 0.3s ease;
-      }
-      #chat-status.live .dot { background: #7dbb6a; box-shadow: 0 0 6px rgba(125, 187, 106, 0.8); }
 
       .hbtn {
         -webkit-app-region: no-drag;
@@ -153,6 +155,72 @@
       .hbtn:active { transform: scale(0.92); }
       .hbtn.active { background: var(--claude-accent); color: #fff7f2; box-shadow: 0 3px 10px rgba(217, 119, 87, 0.35); }
       .hbtn svg { width: 14px; height: 14px; stroke-width: 2.1; }
+
+      /* In-panel notifications: errors, notices, and action feedback appear
+         here instead of stretching the header. The wrapper never blocks the
+         chat; the toast itself is interactive (dismiss). */
+      .notifications {
+        position: absolute;
+        top: 54px;
+        left: 12px;
+        right: 12px;
+        z-index: 40;
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        pointer-events: none;
+      }
+      .toast {
+        pointer-events: auto;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 9px 9px 9px 11px;
+        border: 1px solid rgba(61, 57, 41, 0.14);
+        border-left: 3px solid var(--claude-accent);
+        border-radius: 10px;
+        background: rgba(255, 253, 248, 0.97);
+        color: var(--claude-ink);
+        font-size: 12px;
+        line-height: 1.4;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+        opacity: 0;
+        transform: translateY(-4px);
+        transition: opacity 0.18s ease, transform 0.18s ease;
+      }
+      .toast.show { opacity: 1; transform: translateY(0); }
+      .toast.info { border-left-color: var(--claude-accent); }
+      .toast.success { border-left-color: #7dbb6a; }
+      .toast.warn { border-left-color: #d9a157; }
+      .toast.error { border-left-color: #d96b62; }
+      .toast-text {
+        flex: 1; min-width: 0;
+        overflow-wrap: anywhere;
+      }
+      .toast-close {
+        flex: none;
+        margin: -2px -2px 0 0;
+        width: 20px; height: 20px;
+        padding: 0;
+        border: none; border-radius: 6px;
+        background: transparent;
+        color: var(--claude-ink-soft);
+        font: inherit; font-size: 15px; line-height: 1;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      .toast-close:hover { background: rgba(61, 57, 41, 0.08); color: var(--claude-ink); }
+      body:not(.opaque) .toast {
+        /* Same glass language as the panel: translucent, never a solid
+           black card over the desktop/stream. */
+        background: rgba(20, 18, 12, 0.16);
+        color: #ffffff;
+        border-color: rgba(255, 255, 255, 0.22);
+        backdrop-filter: blur(8px) saturate(1.1);
+        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+      }
+      body:not(.opaque) .toast-close { color: rgba(255, 255, 255, 0.72); }
+      body:not(.opaque) .toast-close:hover { background: rgba(255, 255, 255, 0.14); color: #ffffff; }
 
       /* THE MESSAGES: the official BotRix multistream widget page, embedded
          (the exact page an OBS browser source loads). BotRix maintains all
@@ -171,11 +239,14 @@
       /* SETUP CARD: shown instead of the iframe when the saved widget URL is
          missing/broken. Actionable per failure code, theme-aware. */
       #setup-card {
-        flex: 1; min-height: 0;
+        flex: 1; min-height: 0; min-width: 0;
         display: none; flex-direction: column;
-        align-items: flex-start; justify-content: center; gap: 8px;
+        align-items: flex-start; justify-content: center;
+        justify-content: safe center;
+        gap: 8px;
         padding: 18px; margin: 0 10px 10px;
         border-radius: 12px;
+        overflow-x: hidden; overflow-y: hidden;
         font-size: 12.5px; line-height: 1.5;
         background: rgba(61, 57, 41, 0.06);
         color: var(--claude-ink);
@@ -183,14 +254,36 @@
         user-select: text;
       }
       #setup-card.show { display: flex; }
-      #setup-card .t { font-weight: 700; font-size: 13px; }
+      #setup-card,
+      #settings-panel {
+        scrollbar-width: thin;
+        scrollbar-color: rgba(61, 57, 41, 0.28) transparent;
+      }
+      #setup-card::-webkit-scrollbar,
+      #settings-panel::-webkit-scrollbar { width: 5px; }
+      #setup-card::-webkit-scrollbar-track,
+      #settings-panel::-webkit-scrollbar-track { background: transparent; }
+      #setup-card::-webkit-scrollbar-thumb,
+      #settings-panel::-webkit-scrollbar-thumb {
+        background: rgba(61, 57, 41, 0.28);
+        border-radius: 3px;
+      }
+      body:not(.opaque) #setup-card::-webkit-scrollbar-thumb,
+      body:not(.opaque) #settings-panel::-webkit-scrollbar-thumb {
+        background: rgba(255, 255, 255, 0.32);
+      }
+      #setup-card > * { max-width: 100%; }
+      #setup-card .t { font-weight: 700; font-size: 13px; max-width: 100%; overflow-wrap: anywhere; }
       #setup-card code {
+        display: inline-block;
+        max-width: 100%; min-width: 0;
         font-family: Consolas, monospace; font-size: 11.5px;
         background: rgba(61, 57, 41, 0.1);
         padding: 1px 6px; border-radius: 6px;
-        word-break: break-all;
+        white-space: normal;
+        word-break: break-all; overflow-wrap: anywhere;
       }
-      #setup-card .hint { opacity: 0.75; font-size: 12px; }
+      #setup-card .hint { opacity: 0.75; font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
       body:not(.opaque) #setup-card {
         background: rgba(255, 255, 255, 0.1);
         color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.7);
@@ -201,11 +294,12 @@
          card language as the setup card: radius, surface, padding, and
          the same theme-aware glass/solid overrides. */
       #settings-panel {
-        flex: 1; min-height: 0;
+        flex: 1; min-height: 0; min-width: 0;
         display: none; flex-direction: column;
         align-items: stretch; justify-content: center; gap: 8px;
         padding: 18px; margin: 0 10px 10px;
         border-radius: 12px;
+        overflow-x: hidden; overflow-y: hidden;
         font-size: 12.5px; line-height: 1.5;
         background: rgba(61, 57, 41, 0.06);
         color: var(--claude-ink);
@@ -259,19 +353,11 @@
       body:not(.opaque) .sbtn { background: rgba(255,255,255,0.16); color: #fff; }
       body:not(.opaque) .sbtn:hover { background: rgba(255,255,255,0.24); }
 
-      /* Five header buttons (pin, theme, pass-through, settings, close):
-         below ~380px the button row wins over the decorative text label.
-         The heart stays as identity so the controls never clip. */
-      @media (max-width: 380px) {
-        #chat-header .title .label { display: none; }
-      }
-
-      /* Narrow panels (min width 240): the title/status/viewer pills are
-         supplemental, but the window controls must never be clipped. */
-      @media (max-width: 300px) {
-        #chat-header .title,
-        #chat-status,
-        #viewer-counts { display: none !important; }
+      /* Only tiny heights need an inner scrollbar; normal-size panels keep a
+         clean card with no visible scrollbar. */
+      @media (max-height: 380px) {
+        #setup-card,
+        #settings-panel { overflow-y: auto; }
       }
     </style>
   </head>
@@ -284,7 +370,7 @@
           <span class="vc vc-youtube" title="youtube viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 7.3c-.3-1-1-1.8-2-2C19.2 4.8 12 4.8 12 4.8s-7.2 0-9 .5c-1 .2-1.7 1-2 2C.5 9 .5 12 .5 12s0 3 .5 4.7c.3 1 1 1.8 2 2 1.8.5 9 .5 9 .5s7.2 0 9-.5c1-.2 1.7-1 2-2 .5-1.7.5-4.7.5-4.7s0-3-.5-4.7zM9.8 15.5v-7l6.2 3.5-6.2 3.5z"/></svg><span class="n">0</span></span>
           <span class="vc vc-kick" title="kick viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M5 3h4v4h2V5h2V3h6v4h-2v2h2v4h-2v2h2v6h-6v-2h-2v-2H9v2H5V3z"/></svg><span class="n">0</span></span>
         </span>
-        <span id="chat-status" role="status" aria-live="polite"><span class="dot"></span>connecting...</span>
+        <div class="header-actions">
         <button class="hbtn" id="btn-transparent" title="Transparent background" aria-label="Toggle transparency">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" stroke-dasharray="4 3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/>
@@ -300,6 +386,11 @@
             <path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/>
           </svg>
         </button>
+        <button class="hbtn" id="btn-download" title="Download latest release" aria-label="Open the latest GitHub release page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>
+          </svg>
+        </button>
         <button class="hbtn" id="btn-settings" title="Widget URL settings" aria-label="Widget URL settings" aria-expanded="false" aria-controls="settings-panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
@@ -311,7 +402,9 @@
             <path d="M18 6 6 18M6 6l12 12"/>
           </svg>
         </button>
+        </div>
       </div>
+      <div id="notifications" class="notifications" aria-live="polite" aria-atomic="false"></div>
       <div id="chat-frame-wrap">
         <iframe id="chat-frame" title="Multistream chat" allowtransparency="true"></iframe>
       </div>

@@ -1,0 +1,8 @@
+{
+  "appId": "com.hikasha.chat",
+  "appName": "Hikasha Chat",
+  "webDir": "www",
+  "server": {
+    "androidScheme": "https"
+  }
+}

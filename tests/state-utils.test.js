@@ -372,16 +372,29 @@ t('app identity + reload/viewer/notice wiring aligned across layers', () => {
   assert.equal(id[1], pkg.build.appId);
   assert.ok(main.includes('app.setAppUserModelId(APP_ID)'));
 
+  // Download button must point at this repo's actual releases page.
+  const pub = Array.isArray(pkg.build.publish)
+    ? pkg.build.publish[0]
+    : pkg.build.publish;
+  assert.ok(pub && pub.provider === 'github', 'GitHub publish config missing');
+  assert.ok(
+    main.includes(`https://github.com/${pub.owner}/${pub.repo}/releases/latest`),
+    'RELEASES_URL does not match package.json publish repo',
+  );
+
   for (const needle of [
     "guarded('chat:get-viewers'",
     "guarded('chat:reload-widget'",
     "guarded('chat:toggle-click-through'",
+    "guarded('chat:open-releases'",
     'applyAndReloadWidget',
     'lastViewerPayload',
     'widgetStyleInterval',
     'Control+Super+I',
     'globalShortcut.register',
     'setIgnoreMouseEvents',
+    'shell.openExternal',
+    'RELEASES_URL',
     "send('chat:notice'",
   ]) {
     if (!main.includes(needle)) throw new Error(`main wiring missing: ${needle}`);
@@ -390,6 +403,7 @@ t('app identity + reload/viewer/notice wiring aligned across layers', () => {
     "getViewers: () => ipcRenderer.invoke('chat:get-viewers')",
     "reloadWidget: () => ipcRenderer.invoke('chat:reload-widget')",
     "toggleClickThrough: () => ipcRenderer.invoke('chat:toggle-click-through')",
+    "openReleases: () => ipcRenderer.invoke('chat:open-releases')",
     "ipcRenderer.on('chat:click-through'",
     "ipcRenderer.on('chat:notice'",
   ]) {
@@ -400,9 +414,14 @@ t('app identity + reload/viewer/notice wiring aligned across layers', () => {
     'reloadWidget',
     'renderViewerCounts',
     'renderClickThrough',
+    'notify(',
+    'toast-text',
+    'notificationsEl',
     "getElementById('btn-reload-widget')",
     "getElementById('btn-click-through')",
+    "getElementById('btn-download')",
     'toggleClickThrough',
+    'openReleases',
     "e.key === 'Escape'",
     'onNotice',
   ]) {
@@ -410,8 +429,16 @@ t('app identity + reload/viewer/notice wiring aligned across layers', () => {
   }
   assert.ok(html.includes('id="btn-reload-widget"'));
   assert.ok(html.includes('id="btn-click-through"'));
+  assert.ok(html.includes('id="btn-download"'));
   assert.ok(html.includes('aria-pressed="false"'));
   assert.ok(html.includes('aria-expanded="false"'));
+  assert.ok(html.includes('id="notifications"'));
+  assert.ok(html.includes('class="header-actions"'));
+  assert.equal(html.includes('id="chat-status"'), false);
+  assert.equal(html.includes('@media (max-width: 380px)'), false);
+  assert.equal(html.includes('@media (max-width: 300px)'), false);
+  assert.ok(main.includes('MIN_PANEL_WIDTH'));
+  assert.ok(main.includes('minWidth: MIN_PANEL_WIDTH'));
 });
 
 // --- Windows release naming + double-click setup flow ---
