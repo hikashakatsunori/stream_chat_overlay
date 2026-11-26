@@ -31,7 +31,8 @@ t('sanitizeChatState never emits out-of-range/NaN dims (any input)', fc.property
       s.w >= 240 && s.w <= 1600 && s.h >= 320 && s.h <= 1200 &&
       (s.x === null || Number.isFinite(s.x)) &&
       (s.y === null || Number.isFinite(s.y)) &&
-      typeof s.pinned === 'boolean' && typeof s.transparent === 'boolean'
+      typeof s.pinned === 'boolean' && typeof s.transparent === 'boolean' &&
+      typeof s.clickThrough === 'boolean'
     );
   },
 ));

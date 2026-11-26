@@ -31,6 +31,8 @@ const settingsCurrent = document.getElementById('settings-current');
 const settingsMsg = document.getElementById('settings-msg');
 const saveUrlBtn = document.getElementById('btn-save-url');
 const changeUrlBtn = document.getElementById('btn-change-url');
+const reloadWidgetBtn = document.getElementById('btn-reload-widget');
+const clickThroughBtn = document.getElementById('btn-click-through');
 
 // Status line (built with DOM APIs, never innerHTML). Hoisted as a
 // function declaration so the bridge guard below can report through it.
@@ -104,6 +106,30 @@ transparentBtn.addEventListener('click', async () => {
   transparentBtn.classList.toggle('active', !on);
 });
 
+// Mouse pass-through: while ON the window ignores the mouse entirely, so
+// this button can only turn it ON. Turning it OFF is the Ctrl+Win+I global
+// shortcut or the tray menu.
+function renderClickThrough(enabled) {
+  const on = enabled === true;
+  clickThroughBtn.classList.toggle('active', on);
+  clickThroughBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  clickThroughBtn.title = on
+    ? 'Mouse pass-through ON (Ctrl+Win+I to turn off)'
+    : 'Mouse pass-through (Ctrl+Win+I)';
+}
+
+clickThroughBtn.addEventListener('click', async () => {
+  const on = await safeInvoke(() => api.toggleClickThrough(), 'mouse pass-through');
+  if (on === null) return;
+  renderClickThrough(on);
+  setStatus(
+    on
+      ? 'mouse pass-through ON — Ctrl+Win+I to toggle'
+      : 'mouse pass-through off',
+    false,
+  );
+});
+
 document.getElementById('btn-close').addEventListener('click', () => api.close());
 
 // ---- settings panel (gear icon) ------------------------------------------
@@ -140,6 +166,7 @@ function renderSavedStatus(st) {
 async function openSettings() {
   settingsOpen = true;
   settingsBtn.classList.add('active');
+  settingsBtn.setAttribute('aria-expanded', 'true');
   // The settings card replaces the widget/setup card while open; closing
   // restores whatever was there (the iframe keeps its state while hidden).
   frameWrap.style.display = 'none';
@@ -148,18 +175,21 @@ async function openSettings() {
   settingsUrlInput.value = '';
   showSettingsMsg('', false);
   const st = await safeInvoke(() => api.getConfigStatus(), 'config status');
-  if (settingsOpen) renderSavedStatus(st);
+  if (!settingsOpen) return; // closed while the status round-trip was in flight
+  renderSavedStatus(st);
   settingsUrlInput.focus();
 }
 
 function closeSettings() {
   settingsOpen = false;
   settingsBtn.classList.remove('active');
+  settingsBtn.setAttribute('aria-expanded', 'false');
   settingsPanel.classList.remove('show');
   // Reset inline overrides — CSS defaults bring back the widget iframe
   // (or the boot setup card, which keeps its own .show class).
   frameWrap.style.display = '';
   setupCard.style.display = '';
+  settingsBtn.focus(); // return focus to the control that opened the panel
 }
 
 settingsBtn.addEventListener('click', () => {
@@ -167,8 +197,17 @@ settingsBtn.addEventListener('click', () => {
   else openSettings().catch(() => {});
 });
 
+// Escape closes the settings card from anywhere on the panel page (the
+// input included) and returns focus to the gear button.
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && settingsOpen) {
+    e.preventDefault();
+    closeSettings();
+  }
+});
+
 // After a successful save, the boot setup card (if it was showing) must
-// not keep claiming "no URL saved" — replace it with the restart note.
+// not keep claiming "no URL saved" — replace it with apply guidance.
 function showSavedRestartCard() {
   if (!setupCard.classList.contains('show')) return;
   setupCard.replaceChildren();
@@ -179,7 +218,7 @@ function showSavedRestartCard() {
   const h = document.createElement('div');
   h.className = 'hint';
   h.textContent =
-    'Restart the app (tray → Quit, or the X button) — the widget loads on the next startup.';
+    'Click the gear icon and press Reload to apply it now, or restart the app.';
   setupCard.appendChild(h);
 }
 
@@ -197,12 +236,12 @@ async function saveUrlFromPanel() {
     settingsUrlInput.value = '';
     showSettingsMsg(
       res.code === 'unchanged'
-        ? 'This URL is already saved ✓ — restart the app to load it.'
-        : 'Saved ✓ — restart the app and the widget loads on the next startup.',
+        ? 'This URL is already saved ✓ — click Reload to apply it now.'
+        : 'Saved ✓ — click Reload to apply now, or restart the app.',
       true,
     );
     showSavedRestartCard();
-    setStatus('widget url saved — restart to load', false);
+    setStatus('widget url saved — reload or restart to apply', false);
   } else {
     const copy = SETUP_COPY[res.code];
     showSettingsMsg(
@@ -227,8 +266,26 @@ async function changeUrlFromPanel() {
   settingsUrlInput.select();
 }
 
+async function reloadWidgetFromPanel() {
+  const res = await safeInvoke(() => api.reloadWidget(), 'reload widget');
+  if (res === null) return; // safeInvoke already surfaced the failure
+  if (res.ok) {
+    // Main process restarts the poller and reloads this page right after
+    // the IPC reply, so the iframe binds to the just-saved URL.
+    showSettingsMsg('Reloading the widget…', true);
+    setStatus('reloading widget…', false);
+    return;
+  }
+  const copy = SETUP_COPY[res.code];
+  showSettingsMsg(
+    copy ? `Cannot reload — ${copy[0].toLowerCase()}` : `Cannot reload — ${res.code}.`,
+    false,
+  );
+}
+
 saveUrlBtn.addEventListener('click', () => saveUrlFromPanel().catch(() => {}));
 changeUrlBtn.addEventListener('click', () => changeUrlFromPanel().catch(() => {}));
+reloadWidgetBtn.addEventListener('click', () => reloadWidgetFromPanel().catch(() => {}));
 // Enter in the field = save (same as the Enter button).
 settingsUrlInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') {
@@ -298,9 +355,7 @@ const SETUP_COPY = {
 // Pushed from the main process every ~30s (BotRix viewers REST polling).
 // One pill per platform behind the title: [icon] count; green when that
 // platform has viewers, gray at 0. Counts are textContent — safe updates.
-
-// Keep the unsubscribe so a re-init (HMR/tests) never stacks listeners.
-const offViewers = api.onViewers((v) => {
+function renderViewerCounts(v) {
   viewerWrap.style.display = 'inline-flex';
   // error/stale: the poller failed (offline API), not "0 viewers" — dim
   // the pills and surface it in the tooltip instead of lying with 0s.
@@ -319,7 +374,21 @@ const offViewers = api.onViewers((v) => {
     numEl.textContent = String(n);
     pillEl.classList.toggle('live', n > 0 && !degraded);
   }
-});
+}
+
+// Keep the unsubscribe so a re-init (HMR/tests) never stacks listeners.
+const offViewers = api.onViewers(renderViewerCounts);
+// The immediate first poll can complete before this page subscribes (and a
+// reload re-subscribes late): hydrate from the main process's cached
+// payload so the header is correct without waiting for the next 30s tick.
+if (typeof api.getViewers === 'function') {
+  api
+    .getViewers()
+    .then((v) => {
+      if (v) renderViewerCounts(v);
+    })
+    .catch(() => {});
+}
 window.addEventListener('beforeunload', () => {
   try {
     if (typeof offViewers === 'function') offViewers();
@@ -328,6 +397,16 @@ window.addEventListener('beforeunload', () => {
   }
   try {
     if (typeof offError === 'function') offError();
+  } catch {
+    /* listener already gone */
+  }
+  try {
+    if (typeof offNotice === 'function') offNotice();
+  } catch {
+    /* listener already gone */
+  }
+  try {
+    if (typeof offClickThrough === 'function') offClickThrough();
   } catch {
     /* listener already gone */
   }
@@ -358,6 +437,27 @@ const offError =
         ),
       )
     : null;
+const offNotice =
+  api && typeof api.onNotice === 'function'
+    ? api.onNotice((p) => {
+        // Informational events (e.g. an update is ready) are not errors:
+        // show them in the status line without the failure treatment.
+        setStatus((p && p.message) || 'app notice', false);
+      })
+    : null;
+const offClickThrough =
+  api && typeof api.onClickThrough === 'function'
+    ? api.onClickThrough((p) => {
+        const on = Boolean(p && p.enabled);
+        renderClickThrough(on);
+        setStatus(
+          on
+            ? 'mouse pass-through ON — Ctrl+Win+I to toggle'
+            : 'mouse pass-through off',
+          false,
+        );
+      })
+    : null;
 
 // ---- initial state ------------------------------------------------------------
 
@@ -374,6 +474,7 @@ const offError =
   pinBtn.classList.toggle('active', pinned);
   document.body.classList.toggle('opaque', !transparent);
   transparentBtn.classList.toggle('active', !transparent);
+  renderClickThrough(st ? st.clickThrough === true : false);
 
   // Diagnose config FIRST so every failure mode gets an actionable card
   // (nothing saved, empty value, http:, wrong host, missing/invalid bid)

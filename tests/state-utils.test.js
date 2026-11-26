@@ -34,6 +34,7 @@ t('defaults on empty/garbage', () => {
       h: 480,
       pinned: true,
       transparent: true,
+      clickThrough: false,
     });
   }
 });
@@ -60,10 +61,13 @@ t('x/y null unless finite', () => {
   assert.equal(sanitizeChatState({ x: 120 }).x, 120);
   assert.equal(sanitizeChatState({ y: Infinity }).y, null);
 });
-t('booleans strict, defaults true', () => {
+t('booleans strict; pin/theme default on, pass-through off', () => {
   assert.equal(sanitizeChatState({ pinned: 1 }).pinned, true);
   assert.equal(sanitizeChatState({ pinned: false }).pinned, false);
   assert.equal(sanitizeChatState({ transparent: 'yes' }).transparent, true);
+  assert.equal(sanitizeChatState({}).clickThrough, false);
+  assert.equal(sanitizeChatState({ clickThrough: true }).clickThrough, true);
+  assert.equal(sanitizeChatState({ clickThrough: 1 }).clickThrough, false);
 });
 
 // --- sanitizeConfig (settings db payload validation) ---
@@ -348,6 +352,126 @@ t('settings flow wired end-to-end (db, save IPC, panel UI)', () => {
     if (!html.includes(needle)) {
       throw new Error(`settings panel markup missing: ${needle}`);
     }
+  }
+});
+
+// --- app identity + reload/viewer/notice wiring across all layers ---
+t('app identity + reload/viewer/notice wiring aligned across layers', () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const main = fs.readFileSync(path.join(root, 'electron', 'main.js'), 'utf8');
+  const pre = fs.readFileSync(path.join(root, 'electron', 'chat-preload.js'), 'utf8');
+  const chat = fs.readFileSync(path.join(root, 'src', 'chat.js'), 'utf8');
+  const html = fs.readFileSync(path.join(root, 'chat.html'), 'utf8');
+
+  // Windows keys notifications/taskbar/installer on this id — drift is a bug.
+  const id = main.match(/const APP_ID = '([^']+)'/);
+  assert.ok(id, 'APP_ID constant missing from main.js');
+  assert.equal(id[1], pkg.build.appId);
+  assert.ok(main.includes('app.setAppUserModelId(APP_ID)'));
+
+  for (const needle of [
+    "guarded('chat:get-viewers'",
+    "guarded('chat:reload-widget'",
+    "guarded('chat:toggle-click-through'",
+    'applyAndReloadWidget',
+    'lastViewerPayload',
+    'widgetStyleInterval',
+    'Control+Super+I',
+    'globalShortcut.register',
+    'setIgnoreMouseEvents',
+    "send('chat:notice'",
+  ]) {
+    if (!main.includes(needle)) throw new Error(`main wiring missing: ${needle}`);
+  }
+  for (const needle of [
+    "getViewers: () => ipcRenderer.invoke('chat:get-viewers')",
+    "reloadWidget: () => ipcRenderer.invoke('chat:reload-widget')",
+    "toggleClickThrough: () => ipcRenderer.invoke('chat:toggle-click-through')",
+    "ipcRenderer.on('chat:click-through'",
+    "ipcRenderer.on('chat:notice'",
+  ]) {
+    if (!pre.includes(needle)) throw new Error(`preload wiring missing: ${needle}`);
+  }
+  for (const needle of [
+    'getViewers',
+    'reloadWidget',
+    'renderViewerCounts',
+    'renderClickThrough',
+    "getElementById('btn-reload-widget')",
+    "getElementById('btn-click-through')",
+    'toggleClickThrough',
+    "e.key === 'Escape'",
+    'onNotice',
+  ]) {
+    if (!chat.includes(needle)) throw new Error(`renderer wiring missing: ${needle}`);
+  }
+  assert.ok(html.includes('id="btn-reload-widget"'));
+  assert.ok(html.includes('id="btn-click-through"'));
+  assert.ok(html.includes('aria-pressed="false"'));
+  assert.ok(html.includes('aria-expanded="false"'));
+});
+
+// --- Windows release naming + double-click setup flow ---
+t('Windows release artifact name is URL-safe and matches latest.yml wiring', () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const pattern = pkg.build && pkg.build.win && pkg.build.win.artifactName;
+  assert.equal(pattern, 'Hikasha-Chat-Setup-${version}.${ext}');
+  assert.ok(!/\s/.test(pattern), 'artifact name must never contain spaces');
+  // electron-builder writes this safe name into latest.yml; the release
+  // workflow must upload the exact same filename or auto-update 404s.
+  const release = fs.readFileSync(
+    path.join(root, '.github', 'workflows', 'release.yml'),
+    'utf8',
+  );
+  for (const needle of [
+    'release/Hikasha-Chat-Setup-${VERSION}.exe',
+    'release/Hikasha-Chat-Setup-${VERSION}.exe.blockmap',
+    'release/latest.yml',
+  ]) {
+    if (!release.includes(needle)) {
+      throw new Error(`release workflow missing artifact path: ${needle}`);
+    }
+  }
+});
+
+t('setup scripts use a no-test, self-repairing double-click flow', () => {
+  const path = require('node:path');
+  const fs = require('node:fs');
+  const root = path.join(__dirname, '..');
+  const install = fs.readFileSync(path.join(root, 'install.bat'), 'utf8');
+  const start = fs.readFileSync(path.join(root, 'start.bat'), 'utf8');
+
+  for (const [name, src] of [
+    ['install.bat', install],
+    ['start.bat', start],
+  ]) {
+    for (const needle of [
+      'call npm ci --include=dev',
+      '--loglevel=error',
+      "require('electron')",
+      'HIKASHA_NO_PAUSE',
+      ':fail',
+    ]) {
+      if (!src.includes(needle)) {
+        throw new Error(`${name} missing setup-flow guard: ${needle}`);
+      }
+    }
+  }
+  // End users must never wait for (or be blocked by) the E2E suite.
+  if (install.includes('call npm test')) {
+    throw new Error('install.bat must not run the E2E suite');
+  }
+  if (!start.includes('node electron\\launch.js')) {
+    throw new Error('start.bat must launch through electron/launch.js');
+  }
+  if (!install.includes('Step 6/6') || !start.includes('Step 5/5')) {
+    throw new Error('setup scripts must keep their step-by-step flow');
   }
 });
 

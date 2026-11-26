@@ -6,8 +6,30 @@ All notable changes to this project are documented here. Format follows
 
 ## [Unreleased]
 
+## [0.1.1] — 2026-11-26
+
 ### Added
 
+- In-app Reload: the settings panel's Reload button and the tray's Reload
+  chat panel apply the saved widget URL to the running session — poller and
+  iframe restart together on the same bid, without quitting the app.
+- Mouse pass-through mode: a header pointer button, the OS-global Ctrl+Win+I
+  shortcut, and a tray fallback toggle a persisted mode where the panel
+  ignores mouse input and keyboard focus, so gameplay receives every click
+  and hover. Re-applied on show and restart.
+- Viewer-count hydration: the latest payload is cached and exposed via
+  `chat:get-viewers`, so the header is correct immediately after load,
+  reload, or a tray show instead of waiting up to 30 s.
+- Real tray hide/show: hiding keeps the widget session, messages, and scroll
+  position alive and pauses viewer polling; showing resumes polling on the
+  same frozen URL and repaints the cached counts.
+- Non-error notice channel (`chat:notice`): update-ready events now appear as
+  informational status text instead of being reported as errors.
+- `npm run dev`: Vite dev server + Electron with HMR, no new dependencies.
+- Settings accessibility: Escape closes the settings card and focus returns
+  to the gear button; `aria-expanded` reflects the open state.
+- `AGENTS.md`: architecture, invariants, test expectations, and release
+  lifecycle for contributors and agents.
 - Settings db: the BotRix widget URL is stored in
   `%AppData%/Hikasha Chat/botrix-config.json` (atomic writes) and managed
   through a gear-icon settings panel (Enter/Change buttons, themed input,
@@ -18,16 +40,61 @@ All notable changes to this project are documented here. Format follows
   config failure mode gets an actionable per-code card (missing, empty,
   bad protocol/host/port, too long, no bid, invalid bid).
 - End-to-end test layer (Playwright Electron): boot, full settings flow,
-  restart-load, and close-path verified in the real app.
+  in-app reload, restart-load, pin/theme persistence, and close-path
+  verified in the real app.
 - Property-based tests (fast-check): whole-input-domain properties for the
   URL/state helpers (allowlist, canonicalization, caps, viewer parsing).
 - Behavioral main-process tests: settings-db IPC handlers driven against a
-  real temp db (save, unchanged, rejections, corrupt-db fallback).
+  real temp db (save, unchanged, rejections, sender gating, reload,
+  pin/theme persistence, corrupt-db fallback).
 - Auto-update: packaged builds check GitHub Releases on boot and apply on
   the next start; the tag-gated release workflow publishes installers.
 
+### Fixed
+
+- Auto-update "downloaded" events are no longer surfaced as errors; the
+  updater's `error` event always has a listener, so an offline check cannot
+  throw out of the emitter.
+- Windows `AppUserModelId` now matches `build.appId`, so notifications,
+  taskbar identity, and installer identity agree.
+- A failed legacy `.env` migration write (read-only folder, full disk) can no
+  longer abort boot; migration is best-effort and logged.
+- Viewer results that belong to a previous URL/session are discarded after
+  reload/hide/close (`viewerPollGen` check), so old counts cannot overwrite
+  the new bid's counts.
+- Widget theming is re-applied after every panel load, so Reload no longer
+  loses the injected stylesheet.
+- Reopening a closed panel no longer replays viewer counts cached from a
+  previous bid; the first poll for the fresh window repopulates them.
+- Minimum-size windows keep every header button reachable, and the settings
+  action row wraps instead of clipping the new Reload button.
+- Windows release artifacts now use the URL-safe
+  `Hikasha-Chat-Setup-<version>.exe` name, matching `latest.yml` and the
+  release workflow upload paths; packaged auto-update URLs no longer 404.
+- Node version guidance is consistent everywhere (>= 22.12.0), and
+  `start.bat` verifies the version before launching.
+- Removed dead code (`RESOURCE_ROOTS`, unused bid getter).
+
+### Changed
+
+- Tray "Hide" now hides the panel instead of destroying it; the X button
+  remains the explicit full-quit action.
+- Saving a URL keeps the no-hot-swap guarantee, but the settings card now
+  points at the explicit Reload action instead of requiring a restart.
+- `install.bat` and `start.bat` are reworked for the double-click path:
+  Node/npm preflight, clean lockfile install, automatic repair, Electron
+  runtime preparation, build verification, clear failure guidance, and no
+  E2E suite during installation.
+
 ### Security
 
+- Applied non-breaking dependency fixes: Electron 44.11.6 (certificate
+  advisory), fast-uri 3.1.9, undici 6.29.1 / 7.30.2, and the
+  electron-builder 26.18.1 toolchain update.
+- Added `npm run audit` (fails on high/critical) and wired it into CI. The
+  remaining moderate `minimatch` advisories are confined to electron-builder's
+  build-only chain and have no non-breaking fix; they are tracked as a known
+  exception.
 - IPC sender gating: every channel is restricted to the panel's main frame
   (sub-frames and foreign windows rejected).
 - Preload bridge confined to the top frame (the embedded widget frame can

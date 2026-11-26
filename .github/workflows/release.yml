@@ -39,6 +39,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" \
             --title "Hikasha Chat v${VERSION}" \
             --generate-notes \
-            "release/Hikasha Chat Setup ${VERSION}.exe" \
-            "release/Hikasha Chat Setup ${VERSION}.exe.blockmap" \
+            "release/Hikasha-Chat-Setup-${VERSION}.exe" \
+            "release/Hikasha-Chat-Setup-${VERSION}.exe.blockmap" \
             "release/latest.yml"

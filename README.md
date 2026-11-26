@@ -25,9 +25,16 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 - **Themed messages** — pill rows, bold usernames, platform icons, zebra striping.
 - **Guided setup** — a missing or invalid configuration shows an actionable
   setup card instead of a blank panel.
-- **Tray application** — no taskbar button; Show/Hide and Quit from the tray icon.
+- **Mouse pass-through mode** — the pointer button makes the panel ignore the
+  mouse so clicks and hover reach the game underneath; toggle it from the
+  panel, the tray, or the OS-global **Ctrl+Win+I** shortcut.
+- **Tray application** — no taskbar button; Show/Hide, Reload, Mouse
+  pass-through, and Quit from the tray icon.
 - **In-app setup** — no config files to edit: enter your widget URL once via the
   panel's gear icon; it is stored in a local settings file and loaded on every start.
+- **Apply without restarting** — the settings panel's Reload button (and the
+  tray's Reload action) restarts the viewer poller and widget together on the
+  saved URL, so a new URL takes effect immediately.
 - **Auto-update** — packaged builds check GitHub Releases on boot and apply on
   the next start (dev builds skip the check).
 - **Portable mode** — copy the app folder anywhere and drop an empty
@@ -40,27 +47,34 @@ with any streaming software (OBS Studio, Streamlabs, XSplit) or none at all.
 ## Requirements
 
 - Windows 10/11
-- [Node.js](https://nodejs.org) 18 or later (for running from source)
+- [Node.js](https://nodejs.org) 22.12 or later (for running from source;
+  matches `engines` and the Electron 44 toolchain)
 - A free [BotRix](https://botrix.live) account with Twitch, YouTube,
   and Kick connected
+
+> Electron 44 downloads its binary on the first `require('electron')` (the
+> first `npm start` / test run) — allow ~150 MB and a one-time delay.
 
 ## Quick Start
 
 **Option A — installer scripts (recommended):**
 
-1. Double-click `install.bat`. It verifies Node 18+, installs dependencies,
-   and runs the test suite.
-2. Double-click `start.bat` to launch.
+1. Double-click `install.bat`. It verifies Node 22.12+, performs a clean
+   dependency install, prepares the Electron runtime, and builds the panel.
+2. Double-click `start.bat` to launch. It repairs incomplete dependencies and
+   rebuilds the panel automatically when needed; keep its window open while
+   the overlay runs.
 3. Click the gear (settings) icon in the panel and enter your BotRix
    widget URL (see Configuration).
-4. Restart the app — the widget loads on the next startup.
+4. Click **Reload** in the settings panel (or restart the app) — the widget
+   loads immediately.
 
 **Option B — manual:**
 
 ```bash
 git clone https://github.com/hikashakatsunori/stream_chat_overlay.git
 cd stream_chat_overlay
-npm install
+npm ci
 npm start
 ```
 
@@ -81,11 +95,14 @@ npm start
    (theme/sound — the panel manages those itself), and stores the clean
    URL in a local settings file (`botrix-config.json` in
    `%AppData%/Hikasha Chat`).
-4. Restart the app — the widget loads on the next startup.
+4. Click **Reload** in the settings panel — the viewer poller and the
+   embedded widget restart together on the new URL. A full app restart
+   also loads it.
 
 The panel's **Change** button loads the saved URL back into the field for
-editing; **Enter** validates and saves whatever is in the field. Empty or
-invalid URLs are rejected with a specific message (missing `?bid=`,
+editing; **Enter** validates and saves whatever is in the field; **Reload**
+applies the saved URL to the running panel without restarting the app.
+Empty or invalid URLs are rejected with a specific message (missing `?bid=`,
 non-https, wrong host, invalid characters).
 
 > **Security note:** the `?bid=` value is a private session identifier.
@@ -100,9 +117,22 @@ non-https, wrong host, invalid characters).
 | --- | --- |
 | Pin button | Toggle always-on-top |
 | Transparency button | Switch between glass and solid themes |
-| Gear button | Widget URL settings: enter / change the BotRix widget URL |
+| Gear button | Widget URL settings: enter / change / reload the BotRix widget URL |
+| Settings Reload | Apply the saved URL and reload the widget immediately |
+| Pointer button | Turn mouse pass-through on: clicks/hover go to the game, not the panel |
+| Ctrl+Win+I | Toggle mouse pass-through from anywhere, including while a game is focused |
 | Close button | Quit the application |
-| Tray icon | Show/Hide panel, Quit |
+| Tray icon | Show/Hide panel (hide keeps the chat session alive), Reload chat panel, Mouse pass-through, Quit |
+
+### Mouse pass-through
+
+Click the pointer button in the header to make the panel transparent to mouse
+input. The overlay stays visible and keeps receiving chat, but every click and
+hover at its position goes to the game underneath; the window also stops
+taking keyboard focus. Because the panel can no longer be clicked, turn the
+mode off with **Ctrl+Win+I** or the tray menu's **Mouse pass-through** item.
+The setting persists across restarts. Windows still draws the system cursor;
+pass-through means the panel no longer receives it, so the game does.
 
 Window position, size, pin state, and theme persist between sessions in
 `%AppData%/Hikasha Chat/overlay-state.json`.
@@ -126,8 +156,11 @@ app is gone completely; nothing is written to the machine outside it.
 ## Development
 
 ```bash
-npm test        # syntax checks + unit + property + behavioral tests + build + E2E
-npm run lint    # syntax checks + unit/property/behavioral tests (no build)
+npm ci            # clean, lockfile-exact install
+npm run dev       # Vite dev server + Electron with HMR
+npm test          # syntax checks + unit + property + behavioral tests + build + E2E
+npm run lint      # syntax checks + unit/property/behavioral tests (no build)
+npm run audit     # dependency gate: high/critical advisories fail
 npm run dist:win  # Windows NSIS installer, output to release/
 ```
 
@@ -142,10 +175,12 @@ Test layers:
   only `?bid=`, counts map to `max(0, N)`.
 - **Behavioral** (`tests/main-process.test.js`) — the real main process
   against a stubbed Electron + real temp settings db: save, unchanged,
-  rejections, sender gating, corrupt-db fallback.
+  rejections, sender gating, reload, pin/theme persistence, corrupt-db
+  fallback.
 - **E2E** (`tests/e2e.test.js`, Playwright Electron) — boots the real app
   against an isolated userData dir and drives the actual UI: first-run
-  setup card, gear/Enter/Change flow, restart-load, X-button termination.
+  setup card, settings Escape/focus flow, save + in-app Reload, restart-load,
+  pin/theme persistence, and X-button termination.
 
 | Path | Responsibility |
 | --- | --- |
@@ -153,11 +188,13 @@ Test layers:
 | `electron/state-utils.js` | Tested helpers: state/config validation, URL/bid/viewer logic |
 | `electron/chat-preload.js` | Minimal IPC bridge exposed to the renderer |
 | `electron/launch.js` | Process launcher (strips `ELECTRON_RUN_AS_NODE`) |
+| `scripts/dev.js` | Dev runner: Vite dev server + Electron with HMR |
 | `src/chat.js`, `chat.html` | Panel UI, setup card, settings panel, error display |
 | `splash.html` | Startup splash screen |
 | `tests/state-utils.test.js` | Unit test suite (must remain green) |
 | `install.bat`, `start.bat` | First-run installer and launcher with preflight checks |
 | `vite.config.js` | Renderer build configuration (`dist/renderer`) |
+| `AGENTS.md` | Contributor/agent guide: architecture, invariants, lifecycle gates |
 
 ## Security Model
 
@@ -176,10 +213,13 @@ Test layers:
 
 | Symptom | Cause | Resolution |
 | --- | --- | --- |
-| Setup card: No widget URL saved | Fresh install | Click the gear icon, paste the widget URL, press Enter, restart |
+| Setup card: No widget URL saved | Fresh install | Click the gear icon, paste the widget URL, press Enter, then click Reload |
 | Setup card: missing `?bid=` | Truncated URL | Re-copy the complete link from BotRix, re-enter via the gear icon |
-| `widget failed to load (timeout)` | Invalid bid or offline | Verify the URL and connection, then restart |
+| `widget failed to load (timeout)` | Invalid bid or offline | Verify the URL and connection, then use the tray's **Reload chat panel** |
+| Widget frozen or half-styled | Widget page stalled | Tray → **Reload chat panel** (restarts the page and re-applies theming) |
 | Viewer counts dimmed at 0 | BotRix unreachable | Automatic recovery with exponential backoff |
+| Ctrl+Win+I does nothing | Hotkey owned by another app | Use the tray menu's **Mouse pass-through** item; the panel shows a notice when the hotkey is unavailable |
+| Can't click the panel after enabling pass-through | Expected | Press Ctrl+Win+I or use the tray to turn it off |
 | `panel bridge unavailable` | Preload failure | Restart; reinstall if the problem persists |
 
 ## License

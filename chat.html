@@ -81,17 +81,18 @@
 
       /* header: drag handle + status + buttons */
       #chat-header {
-        display: flex; align-items: center; gap: 8px;
-        padding: 10px 12px 8px;
+        display: flex; align-items: center; gap: 5px;
+        padding: 10px 10px 8px;
         -webkit-app-region: drag;
         cursor: default;
         flex: none;
       }
       #chat-header .title {
-        display: flex; align-items: center; gap: 7px;
+        display: flex; align-items: center; gap: 5px;
         color: var(--claude-ink);
-        font-size: 13px; font-weight: 600;
+        font-size: 12.5px; font-weight: 600;
         white-space: nowrap;
+        flex: 0 1 auto; min-width: 0; overflow: hidden;
       }
       #chat-header .title .heart { color: var(--claude-accent); font-size: 12px; }
       /* viewer counts: one pill per platform behind the title, each with
@@ -99,19 +100,20 @@
          the platform name */
       #viewer-counts {
         display: none; /* shown once the first count arrives */
-        align-items: center; gap: 6px;
+        align-items: center; gap: 4px;
         white-space: nowrap;
+        flex: 0 1 auto; min-width: 0; overflow: hidden;
       }
       #viewer-counts .vc {
-        display: inline-flex; align-items: center; gap: 4px;
-        font-size: 11px; font-weight: 600;
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 10.5px; font-weight: 600;
         color: var(--claude-ink-soft);
         background: rgba(61, 57, 41, 0.08);
         border-radius: 8px;
-        padding: 2px 7px;
+        padding: 2px 5px;
       }
       #viewer-counts .vc svg {
-        width: 12px; height: 12px;
+        width: 11px; height: 11px;
         display: block;
       }
       #viewer-counts .vc.live { color: #7dbb6a; background: rgba(125, 187, 106, 0.14); }
@@ -141,8 +143,8 @@
       .hbtn {
         -webkit-app-region: no-drag;
         display: flex; align-items: center; justify-content: center;
-        width: 28px; height: 28px;
-        border: none; border-radius: 9px;
+        width: 26px; height: 26px; flex: none;
+        border: none; border-radius: 8px;
         background: transparent; color: var(--claude-ink);
         cursor: pointer;
         transition: background 0.18s ease, transform 0.22s var(--spring), box-shadow 0.22s ease;
@@ -226,7 +228,7 @@
       }
       #settings-url:focus { border-color: var(--claude-accent); box-shadow: 0 0 0 2px rgba(217, 119, 87, 0.25); }
       #settings-url::placeholder { color: var(--claude-ink-soft); }
-      .srow { display: flex; gap: 8px; }
+      .srow { display: flex; gap: 8px; flex-wrap: wrap; }
       /* .sbtn mirrors the .hbtn reactions: same spring transform, hover
          lift, active press, accent focus ring — sized for text labels. */
       .sbtn {
@@ -256,12 +258,27 @@
       body:not(.opaque) #settings-url::placeholder { color: rgba(255,255,255,0.6); }
       body:not(.opaque) .sbtn { background: rgba(255,255,255,0.16); color: #fff; }
       body:not(.opaque) .sbtn:hover { background: rgba(255,255,255,0.24); }
+
+      /* Five header buttons (pin, theme, pass-through, settings, close):
+         below ~380px the button row wins over the decorative text label.
+         The heart stays as identity so the controls never clip. */
+      @media (max-width: 380px) {
+        #chat-header .title .label { display: none; }
+      }
+
+      /* Narrow panels (min width 240): the title/status/viewer pills are
+         supplemental, but the window controls must never be clipped. */
+      @media (max-width: 300px) {
+        #chat-header .title,
+        #chat-status,
+        #viewer-counts { display: none !important; }
+      }
     </style>
   </head>
   <body class="resizable">
     <div id="chat-panel">
       <div id="chat-header">
-        <div class="title"><span class="heart">&#9829;</span> Chat</div>
+        <div class="title"><span class="heart">&#9829;</span><span class="label">Chat</span></div>
         <span id="viewer-counts">
           <span class="vc vc-twitch" title="twitch viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M4.3 3 3 6.2v13.2h4.6L10.3 22h2.4l2.7-2.6h4.2L22 15V3H4.3zm15.4 11.2-2.6 2.5h-4.2l-2.7 2.6v-2.6H7V4.8h12.7v9.4zM11 8.4h1.8v5H11V8.4zm4.7 0h1.8v5h-1.8v-5z"/></svg><span class="n">0</span></span>
           <span class="vc vc-youtube" title="youtube viewers"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M23 7.3c-.3-1-1-1.8-2-2C19.2 4.8 12 4.8 12 4.8s-7.2 0-9 .5c-1 .2-1.7 1-2 2C.5 9 .5 12 .5 12s0 3 .5 4.7c.3 1 1 1.8 2 2 1.8.5 9 .5 9 .5s7.2 0 9-.5c1-.2 1.7-1 2-2 .5-1.7.5-4.7.5-4.7s0-3-.5-4.7zM9.8 15.5v-7l6.2 3.5-6.2 3.5z"/></svg><span class="n">0</span></span>
@@ -278,7 +295,12 @@
             <path d="M12 17v5"/><path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16h14v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1z"/>
           </svg>
         </button>
-        <button class="hbtn" id="btn-settings" title="Widget URL settings" aria-label="Widget URL settings">
+        <button class="hbtn" id="btn-click-through" title="Mouse pass-through (Ctrl+Win+I)" aria-label="Toggle mouse pass-through (Ctrl+Win+I)" aria-pressed="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/>
+          </svg>
+        </button>
+        <button class="hbtn" id="btn-settings" title="Widget URL settings" aria-label="Widget URL settings" aria-expanded="false" aria-controls="settings-panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/>
             <circle cx="12" cy="12" r="3"/>
@@ -310,6 +332,7 @@
         <div class="srow">
           <button class="sbtn primary" id="btn-save-url" title="Validate and save this URL" aria-label="Save widget URL">Enter</button>
           <button class="sbtn" id="btn-change-url" title="Load the saved URL into the field" aria-label="Change widget URL">Change</button>
+          <button class="sbtn" id="btn-reload-widget" title="Apply the saved URL and reload the widget now" aria-label="Reload widget">Reload</button>
         </div>
         <div id="settings-msg" class="hint" role="status" aria-live="polite"></div>
       </div>

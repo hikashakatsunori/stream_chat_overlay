@@ -1,6 +1,6 @@
 {
   "name": "chat-overlay-frontend",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Transparent always-on-top multistream chat overlay for streamers - Twitch, YouTube and Kick live chat in one borderless Electron panel (BotRix widget, OBS alternative).",
   "keywords": [
@@ -34,9 +34,11 @@
   },
   "scripts": {
     "build": "vite build",
+    "dev": "node scripts/dev.js",
     "start": "npm run build && node electron/launch.js",
-    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && npm run build && node tests/e2e.test.js",
-    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js",
+    "test": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js && npm run build && node tests/e2e.test.js",
+    "lint": "node --check electron/main.js && node --check electron/state-utils.js && node --check src/chat.js && node --check electron/chat-preload.js && node --check electron/launch.js && node --check scripts/dev.js && node tests/state-utils.test.js && node tests/property.test.js && node tests/main-process.test.js",
+    "audit": "npm audit --audit-level=high",
     "dist": "npm run build && electron-builder",
     "dist:win": "npm run build && electron-builder --win"
   },
@@ -62,7 +64,8 @@
       "target": [
         "nsis"
       ],
-      "icon": "public/chat-logo.png"
+      "icon": "public/chat-logo.png",
+      "artifactName": "Hikasha-Chat-Setup-${version}.${ext}"
     },
     "nsis": {
       "oneClick": false,

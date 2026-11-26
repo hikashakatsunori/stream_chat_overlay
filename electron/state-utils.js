@@ -36,6 +36,10 @@ function sanitizeChatState(raw) {
     h: Math.min(1200, Math.max(320, Math.round(numOr(c.h, 480)))),
     pinned: boolOr(c.pinned, true),
     transparent: boolOr(c.transparent, true),
+    // Mouse pass-through: off by default so a fresh install is clickable.
+    // When on, the window ignores the mouse and is non-focusable; the
+    // global shortcut or tray menu turns it back off.
+    clickThrough: boolOr(c.clickThrough, false),
   };
 }
 

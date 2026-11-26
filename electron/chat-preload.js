@@ -20,6 +20,22 @@ contextBridge.exposeInMainWorld('chatPanel', {
   /** The BotRix multistream widget URL to embed (from the settings db). */
   getWidgetUrl: () => ipcRenderer.invoke('chat:get-widget-url'),
 
+  /** Latest viewer payload so the header can hydrate immediately. */
+  getViewers: () => ipcRenderer.invoke('chat:get-viewers'),
+
+  /** Toggle mouse pass-through; returns the new boolean state. */
+  toggleClickThrough: () => ipcRenderer.invoke('chat:toggle-click-through'),
+
+  /** Main-process pass-through changes: { enabled, source }. */
+  onClickThrough: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('chat:click-through', listener);
+    return () => ipcRenderer.removeListener('chat:click-through', listener);
+  },
+
+  /** Apply the saved URL now: restarts the poller and reloads the panel. */
+  reloadWidget: () => ipcRenderer.invoke('chat:reload-widget'),
+
   /** Machine-readable config diagnosis: { code, url, bid }. */
   getConfigStatus: () => ipcRenderer.invoke('chat:get-config-status'),
 
@@ -39,6 +55,13 @@ contextBridge.exposeInMainWorld('chatPanel', {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('chat:error', listener);
     return () => ipcRenderer.removeListener('chat:error', listener);
+  },
+
+  /** Non-error app notices: { where, message } (e.g. update ready). */
+  onNotice: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('chat:notice', listener);
+    return () => ipcRenderer.removeListener('chat:notice', listener);
   },
 
   /** Persistent-ish window state for the renderer to restore its UI from. */

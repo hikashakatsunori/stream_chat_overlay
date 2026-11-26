@@ -22,6 +22,7 @@ const {
   Tray,
   Menu,
   nativeImage,
+  globalShortcut,
 } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('node:path');
@@ -42,8 +43,6 @@ function resourceRoots() {
   }
   return roots;
 }
-const RESOURCE_ROOTS = resourceRoots();
-
 function firstExisting(paths) {
   return paths.find((p) => fs.existsSync(p)) || null;
 }
@@ -51,6 +50,21 @@ function firstExisting(paths) {
 let chatWin = null;
 let splashWin = null;
 let tray = null;
+// Widget styling poll (re-armed on every panel load so webContents.reload()
+// restyles the freshly loaded iframe instead of silently losing the theme).
+let widgetStyleInterval = null;
+let widgetStyleCap = null;
+// False when another app owns Ctrl+Win+I; the panel is told to use the tray.
+let clickThroughShortcutOk = true;
+
+// Must match electron-builder's build.appId (package.json): Windows keys
+// notifications, taskbar grouping and installer identity on this id.
+const APP_ID = 'live.botrix.chat-overlay';
+
+// Ctrl+Win+I. Electron names the Windows key "Super"; "Win" is an invalid
+// accelerator token (it silently degrades to Ctrl+I). This is deliberately
+// OS-global so it works while a game has focus.
+const CLICK_THROUGH_ACCELERATOR = 'Control+Super+I';
 
 const chatState = {
   x: null,
@@ -59,6 +73,7 @@ const chatState = {
   h: 480,
   pinned: true,
   transparent: true,
+  clickThrough: false,
 };
 
 // Chat messages themselves are NEVER stored anywhere: no buffer, no disk,
@@ -166,8 +181,15 @@ function migrateLegacyEnvConfig() {
         if (!m) continue;
         const d = diagnoseWidgetUrl(m[0].trim());
         if (d.code === 'ok') {
-          writeBotrixConfig({ widgetUrl: d.url });
-          console.error('[config] migrated legacy config-file widget URL into the settings db');
+          // A read-only install dir / full disk must never abort boot: the
+          // migration is best-effort, the app still starts unconfigured.
+          try {
+            writeBotrixConfig({ widgetUrl: d.url });
+            console.error('[config] migrated legacy config-file widget URL into the settings db');
+          } catch (err) {
+            console.error('[config] legacy migration failed:', err.message);
+            appendErrorLog('config-migrate', err);
+          }
         }
         return; // only the first value line is considered
       }
@@ -222,19 +244,46 @@ function createTrayIcon() {
   return nativeImage.createEmpty();
 }
 
+function chatPanelVisible() {
+  return Boolean(chatWin && !chatWin.isDestroyed() && chatWin.isVisible());
+}
+
 function buildTrayMenu() {
-  const open = Boolean(chatWin && !chatWin.isDestroyed());
-  return Menu.buildFromTemplate([
+  const open = chatPanelVisible();
+  const items = [
     {
       label: open ? 'Hide chat panel' : 'Show chat panel',
       // Open-state is recomputed AT CLICK TIME: the menu can sit open
       // while the panel is opened/hidden through other paths — a captured
       // boolean makes the toggle a silent no-op.
-      click: () => setChatOpen(!(chatWin && !chatWin.isDestroyed())),
+      click: () => setChatOpen(!chatPanelVisible()),
     },
+  ];
+  if (chatWin && !chatWin.isDestroyed()) {
+    items.push({
+      label: 'Reload chat panel',
+      click: () => {
+        try {
+          reloadChatPanel();
+        } catch (err) {
+          reportUnexpected('tray-reload', err);
+        }
+      },
+    });
+  }
+  items.push(
     { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
-  ]);
+    {
+      // Tray fallback: while pass-through is ON the panel cannot receive
+      // the click that would turn it off, so this item must always exist.
+      label: 'Mouse pass-through (Ctrl+Win+I)',
+      type: 'checkbox',
+      checked: chatState.clickThrough === true,
+      click: (item) => setClickThrough(Boolean(item && item.checked), 'tray'),
+    },
+  );
+  items.push({ type: 'separator' }, { label: 'Quit', click: () => app.quit() });
+  return Menu.buildFromTemplate(items);
 }
 
 function createTray() {
@@ -245,6 +294,18 @@ function createTray() {
 
 function refreshTray() {
   if (tray) tray.setContextMenu(buildTrayMenu());
+}
+
+/** Stop the per-load widget styling poll. Idempotent. */
+function stopWidgetStylePoll() {
+  if (widgetStyleInterval) {
+    clearInterval(widgetStyleInterval);
+    widgetStyleInterval = null;
+  }
+  if (widgetStyleCap) {
+    clearTimeout(widgetStyleCap);
+    widgetStyleCap = null;
+  }
 }
 
 /** Renderer-initiated top-frame navigation is never wanted (see the
@@ -350,6 +411,7 @@ function createSplashWindow() {
         dismissSplash();
         if (chatWin && !chatWin.isDestroyed()) chatWin.show();
         else createChatWindow();
+        refreshTray();
       },
       ok ? 2500 : 0,
     );
@@ -447,6 +509,9 @@ function createChatWindow(opts = {}) {
   });
 
   if (chatState.pinned) chatWin.setAlwaysOnTop(true, 'screen-saver');
+  // Apply pass-through before the first paint so a persisted ON state never
+  // briefly steals a click from the game during startup.
+  applyClickThrough();
 
   // Never let embedded widget content open popups or claim permissions:
   // target=_blank / window.open inside the BotRix iframe must not spawn
@@ -495,11 +560,29 @@ function createChatWindow(opts = {}) {
     saveState();
   });
   chatWin.on('closed', () => {
+    stopViewerPolling();
+    stopWidgetStylePoll();
     chatWin = null;
     saveState();
-    // Panel closed = hide to tray: the app stays alive there (this is a
-    // tray-resident app — no taskbar presence at all), reopenable from
-    // the tray menu's "Show chat panel".
+    // Actual window close (Alt+F4 / OS close): the tray stays alive and
+    // "Show chat panel" creates a fresh panel. The X button never reaches
+    // here — it quits the whole app.
+    refreshTray();
+  });
+  chatWin.on('show', () => {
+    // Resuming from a tray hide: restart the poll chain on the SAME URL the
+    // embedded widget was frozen with, and repaint the cached counts
+    // instantly instead of waiting for the next network round-trip.
+    applyClickThrough(); // hide/show can reset the OS hit-test flags
+    startViewerPolling({ refreshUrl: false });
+    if (lastViewerPayload) {
+      chatWin.webContents.send('chat:viewers', lastViewerPayload);
+    }
+    refreshTray();
+  });
+  chatWin.on('hide', () => {
+    // Hidden to tray: keep the widget session alive but stop polling.
+    stopViewerPolling();
     refreshTray();
   });
 
@@ -554,45 +637,192 @@ function createChatWindow(opts = {}) {
     chatReady.catch(() => {});
   });
 
-  // viewer counts: poll while the panel is open, stop when it closes
+  // viewer counts: poll while the panel is visible; hide pauses the chain,
+  // show resumes it (the idempotent start guard prevents double chains).
+  // A fresh window is a fresh session (it may embed a URL saved since the
+  // last window): never replay counts that belong to an older bid.
+  lastViewerPayload = null;
   startViewerPolling();
-  chatWin.once('closed', () => stopViewerPolling());
 
-  chatWin.webContents.once('did-finish-load', () => {
+  // Re-arm on EVERY main-frame load (initial load and webContents.reload()
+  // from the Reload action): the freshly loaded widget iframe loses the
+  // injected style, so the styling poll must run again. The cached viewer
+  // payload is pushed immediately so a reload never blanks the pills.
+  chatWin.webContents.on('did-finish-load', () => {
+    if (!chatWin || chatWin.isDestroyed()) return;
+    if (lastViewerPayload) {
+      chatWin.webContents.send('chat:viewers', lastViewerPayload);
+    }
+    // Re-sync the button even if the page missed a toggle while reloading.
+    chatWin.webContents.send('chat:click-through', {
+      enabled: chatState.clickThrough === true,
+      source: 'load',
+    });
+    if (!clickThroughShortcutOk) {
+      sendNotice(
+        'shortcut',
+        'Ctrl+Win+I is unavailable on this system — use the tray menu for mouse pass-through.',
+      );
+    }
     // Theme the embedded BotRix widget (panel-matched look) once its frame
     // appears — the iframe loads after the panel page, so poll briefly.
     // Keep injecting until the widget frame is up AND has rendered real
-    // chat rows (the styling — and the one-shot structure diagnostic —
-    // must land on actual messages), then stop: the injected
-    // MutationObserver keeps normalizing rows that arrive later, and
-    // re-theming is redone on demand by the transparency toggle. The 30 s
-    // cap ends the poll for widgets that never load at all.
-    const frameTimer = setInterval(() => {
+    // chat rows, then stop: the injected MutationObserver keeps normalizing
+    // rows that arrive later, and re-theming is redone on demand by the
+    // transparency toggle. The 30 s cap ends the poll for widgets that
+    // never load at all.
+    stopWidgetStylePoll();
+    widgetStyleInterval = setInterval(() => {
       if (!chatWin || chatWin.isDestroyed()) {
-        clearInterval(frameTimer);
+        stopWidgetStylePoll();
         return;
       }
       if (!injectChatWidgetStyle()) return; // widget frame not up yet
       widgetHasChatRows()
         .then((hasRows) => {
           if (!hasRows) return; // keep polling until real messages exist
-          clearInterval(frameTimer);
+          stopWidgetStylePoll();
           injectChatWidgetStyle(); // one final injection, then stop
         })
         .catch(() => {});
     }, 1500);
-    setTimeout(() => clearInterval(frameTimer), 30000);
-    chatWin.once('closed', () => clearInterval(frameTimer));
+    widgetStyleCap = setTimeout(stopWidgetStylePoll, 30000);
   });
 }
 
-function setChatOpen(open) {
-  if (open && !chatWin) {
-    createChatWindow();
-  } else if (!open && chatWin) {
-    chatWin.close(); // 'closed' handler clears state
-    return;
+/** Apply the mouse pass-through state to the live panel. While ON the
+ * window ignores every mouse event (clicks land in the game underneath)
+ * and is made non-focusable so gameplay keys are not swallowed. Flags are
+ * re-applied on create/show because Windows can reset them across
+ * hide/show. */
+function applyClickThrough() {
+  if (!chatWin || chatWin.isDestroyed()) return;
+  const on = chatState.clickThrough === true;
+  try {
+    chatWin.setIgnoreMouseEvents(on);
+    chatWin.setFocusable(!on);
+    if (on) chatWin.blur();
+  } catch (err) {
+    reportUnexpected('click-through', err);
   }
+}
+
+/** Toggle pass-through from the header button, global shortcut, or tray.
+ * Persists the state and pushes it to the panel. */
+function setClickThrough(enabled, source) {
+  const next = enabled === true;
+  if (chatState.clickThrough === next) {
+    applyClickThrough(); // heal a flag reset by hide/show
+    return next;
+  }
+  chatState.clickThrough = next;
+  applyClickThrough();
+  saveState();
+  refreshTray();
+  try {
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWin.webContents.send('chat:click-through', {
+        enabled: next,
+        source: String(source || 'app'),
+      });
+    }
+  } catch {
+    /* window gone — the tray checkbox still reflects the state */
+  }
+  return next;
+}
+
+/** OS-global by design: the user is in a game, not focused on this app. */
+function registerGlobalShortcuts() {
+  try {
+    clickThroughShortcutOk = globalShortcut.register(
+      CLICK_THROUGH_ACCELERATOR,
+      () => setClickThrough(!chatState.clickThrough, 'shortcut'),
+    );
+    if (!clickThroughShortcutOk) {
+      appendErrorLog(
+        'shortcut',
+        `could not register ${CLICK_THROUGH_ACCELERATOR}; use the tray menu`,
+      );
+    }
+  } catch (err) {
+    clickThroughShortcutOk = false;
+    reportUnexpected('shortcut', err);
+  }
+}
+
+/** Open/close the panel from the tray or a second instance. "Close" is a
+ * real HIDE now: the widget session, message DOM and scroll position stay
+ * alive, and polling pauses until the next show. Full termination is the
+ * panel's X button (chat:close). */
+function setChatOpen(open) {
+  if (open) {
+    if (!chatWin || chatWin.isDestroyed()) {
+      createChatWindow();
+      return;
+    }
+    if (chatWin.isMinimized()) chatWin.restore();
+    applyClickThrough();
+    chatWin.show();
+    // A pass-through window must not take keyboard focus from the game.
+    if (chatState.clickThrough !== true) chatWin.focus();
+    startViewerPolling({ refreshUrl: false }); // no-op when already running
+    // Windows: show() can re-register a taskbar button even with
+    // skipTaskbar:true — re-assert the tray-only contract.
+    try {
+      chatWin.setSkipTaskbar(true);
+    } catch {
+      /* window closing */
+    }
+    refreshTray();
+  } else if (chatWin && !chatWin.isDestroyed()) {
+    chatWin.hide();
+    refreshTray();
+  }
+}
+
+/**
+ * Apply the saved widget URL to the running panel: restart the viewer
+ * poller on the new bid and reload the panel page so its iframe embeds the
+ * same URL. Poller and iframe are restarted together, so they can never
+ * disagree (the original boot-freeze invariant, made explicit). Returns
+ * the same shape as chat:save-url for the settings UI. */
+function applyAndReloadWidget() {
+  const d = diagnoseBotrixConfig();
+  if (d.code !== 'ok') {
+    // Broken config: stop stale polling so the setup card is not decorated
+    // with counts from a URL that is no longer embedded.
+    stopViewerPolling();
+    lastViewerPayload = null;
+    viewerPollUrl = null;
+    return { ok: false, code: d.code, url: d.url };
+  }
+  stopViewerPolling();
+  lastViewerPayload = null; // old bid's counts must never survive the swap
+  viewerPollUrl = d.url; // freeze the new URL even while hidden
+  // Reload can be triggered from the tray while hidden: keep the pause
+  // contract (no polling until shown) — show starts this frozen URL.
+  if (chatPanelVisible()) startViewerPolling();
+  if (chatWin && !chatWin.isDestroyed()) {
+    // Give the IPC reply a beat to reach the renderer before navigation
+    // tears the page down (otherwise the button reads as a failure).
+    setTimeout(() => {
+      if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.reload();
+    }, 100);
+  }
+  return { ok: true, code: 'ok', url: d.url, bid: d.bid };
+}
+
+/** Tray reload: always re-render the panel page, even when the saved config
+ * is broken (the setup card must come back). */
+function reloadChatPanel() {
+  const res = applyAndReloadWidget();
+  if (!res.ok && chatWin && !chatWin.isDestroyed()) {
+    setTimeout(() => {
+      if (chatWin && !chatWin.isDestroyed()) chatWin.webContents.reload();
+    }, 100);
+  }
+  return res;
 }
 
 /**
@@ -669,12 +899,16 @@ async function fetchPlatformViewers(widgetUrl, platform) {
 
 let viewerFailStreak = 0;
 let viewerPollDelayMs = VIEWER_POLL_S * 1000;
-// The poller is frozen to the BOOT-time widget URL: a URL saved via the
-// gear icon mid-session is adopted by the next startup, never by the
-// running session — the embedded iframe is also frozen at boot, so the
-// two layers must always agree (viewer pills vs chat content can never
-// show different channels).
+// Frozen poll URL: the embedded iframe and the poller must always target
+// the same bid. Saving a URL does not hot-swap; Reload restarts BOTH
+// (applyAndReloadWidget), a restart reads the db for both.
 let viewerPollUrl = null;
+// True while a poll chain is scheduled/running. Makes start idempotent so
+// hide -> show cannot stack a second chain on top of the first.
+let viewerPollingActive = false;
+// Last payload pushed to the panel. Replayed after reload/show so the
+// header never blinks to dimmed zeros while the first poll is in flight.
+let lastViewerPayload = null;
 // Poll-loop generation: start/stop bump it, so an in-flight poll from a
 // previous loop can never reschedule. Without this, a panel closed and
 // reopened while a poll's network requests are still outstanding leaves
@@ -690,12 +924,17 @@ let viewerPollGen = 0;
  * hammered every 30 s forever (M-09). Backoff ladder:
  * 30s → 60s → 120s → 240s → 300s (5-min plateau at streak ≥ 4). */
 async function pollViewerCounts() {
+  const gen = viewerPollGen;
   const widgetUrl = viewerPollUrl;
   const bid = widgetUrl ? extractBotrixBid(widgetUrl) : null;
   if (!widgetUrl || !bid) return; // unconfigured: stay silent
   const [twitch, youtube, kick] = await Promise.all(
     VIEWER_PLATFORMS.map((p) => fetchPlatformViewers(widgetUrl, p)),
   );
+  // A stop/reload (hide, URL swap, window close) bumps the generation while
+  // these requests are in flight. Those results belong to the OLD bid and
+  // must never overwrite the new session's counts.
+  if (gen !== viewerPollGen || !viewerPollingActive) return;
   const failures = [twitch, youtube, kick].filter((r) => r === null).length;
   if (failures > 0) {
     viewerFailStreak += 1;
@@ -718,46 +957,53 @@ async function pollViewerCounts() {
     error: failures > 0,
     stale: viewerFailStreak > 1,
   };
+  lastViewerPayload = payload;
   if (chatWin && !chatWin.isDestroyed()) {
     chatWin.webContents.send('chat:viewers', payload);
   }
 }
 
-/** Extract the bid from the configured widget URL (single source of truth:
- * the saved widget URL in the settings db carries the session id).
- * Delegates to the tested shared helper (state-utils.js). */
-function getBotrixBid() {
-  return extractBotrixBid(getBotrixWidgetUrl());
-}
-
+/** Schedule the next poll tick on the current generation. The generation
+ * check in tick() prevents a stale in-flight chain from rescheduling. */
 function scheduleViewerPoll() {
   if (viewerTimer) return;
   const gen = viewerPollGen;
   const tick = async () => {
     viewerTimer = null;
     await pollViewerCounts();
-    if (gen === viewerPollGen && chatWin && !chatWin.isDestroyed()) {
+    if (
+      gen === viewerPollGen &&
+      viewerPollingActive &&
+      chatWin &&
+      !chatWin.isDestroyed()
+    ) {
       viewerTimer = setTimeout(tick, viewerPollDelayMs);
     }
   };
   viewerTimer = setTimeout(tick, 0); // immediate first count
 }
 
-function startViewerPolling() {
+function startViewerPolling({ refreshUrl = true } = {}) {
+  if (viewerPollingActive) return; // idempotent: show must not stack chains
+  viewerPollingActive = true;
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
   viewerPollGen += 1; // invalidate any in-flight poll from a previous loop
-  viewerPollUrl = getBotrixWidgetUrl(); // frozen boot-time config
+  if (refreshUrl || !viewerPollUrl) {
+    viewerPollUrl = getBotrixWidgetUrl(); // frozen until an explicit reload
+  }
   scheduleViewerPoll();
 }
 
 function stopViewerPolling() {
+  viewerPollingActive = false;
   if (viewerTimer) {
     clearTimeout(viewerTimer);
     viewerTimer = null;
   }
   viewerPollGen += 1; // in-flight poll must not reschedule after close
-  viewerPollUrl = null;
+  // viewerPollUrl is intentionally kept: hide -> show resumes polling on
+  // the SAME frozen URL the visible iframe still embeds.
   viewerFailStreak = 0;
   viewerPollDelayMs = VIEWER_POLL_S * 1000;
 }
@@ -1094,13 +1340,25 @@ function registerIpc() {
   guarded('chat:get-state', () => ({
     pinned: chatState.pinned === true,
     transparent: chatState.transparent !== false,
+    clickThrough: chatState.clickThrough === true,
     // NOTE: no `connected`/`recent` fields — the chat-reader pipeline was
     // removed (the panel embeds the BotRix widget, which manages its own
     // connection); those legacy fields would always read as dead values.
   }));
 
+  // Header mouse button / no-window paths toggle the same persisted flag.
+  guarded('chat:toggle-click-through', () =>
+    setClickThrough(!chatState.clickThrough, 'button'),
+  );
+
   // The BotRix widget URL for the panel's iframe (from the settings db).
   guarded('chat:get-widget-url', () => getBotrixWidgetUrl());
+
+  // Latest viewer payload (or null before the first completed poll). The
+  // renderer hydrates from this after subscribing: the immediate first
+  // poll can finish before the page's JS is ready, and a reload/hide-show
+  // must not leave the pills blank until the next 30 s tick.
+  guarded('chat:get-viewers', () => lastViewerPayload);
 
   // Machine-readable config diagnosis for the setup card:
   // { code, url, bid } — code is one of ok|missing|empty|
@@ -1113,9 +1371,9 @@ function registerIpc() {
   // code 'unchanged' means the exact same canonical URL was already
   // stored. The URL is canonicalized (only ?bid= kept) BEFORE it is
   // written, so the db only ever holds a clean embeddable https: BotRix
-  // URL. Saving does NOT hot-swap the running widget: the next startup
-  // reads the db and loads it (the poller picks the new bid up on its
-  // next tick either way).
+  // URL. Saving does NOT hot-swap the running widget (the iframe would
+  // change under the streamer); chat:reload-widget restarts the poller and
+  // reloads the page together, and a full restart also picks it up.
   guarded('chat:save-url', (rawUrl) => {
     const d = diagnoseWidgetUrl(typeof rawUrl === 'string' ? rawUrl.trim() : null);
     if (d.code !== 'ok') return { ok: false, code: d.code, url: d.url };
@@ -1126,6 +1384,12 @@ function registerIpc() {
     writeBotrixConfig({ widgetUrl: d.url });
     return { ok: true, code: 'ok', url: d.url, bid: d.bid };
   });
+
+  // Apply the saved URL to the RUNNING panel without a full app restart:
+  // restart the poller on the new bid and reload the page so its iframe
+  // embeds the same URL. Rejects (without touching the UI) when the saved
+  // config is not usable; the settings panel shows the per-code message.
+  guarded('chat:reload-widget', () => applyAndReloadWidget());
 
   // Panel X button — explicit user intent to exit the overlay ENTIRELY:
   // no window, no tray, no background process, ever. (Hide-to-tray on X
@@ -1205,6 +1469,21 @@ function reportUnexpected(where, err) {
   }
 }
 
+/** Non-error, user-facing notice (e.g. an update is ready). Logged for
+ * support and pushed to the open panel — never rendered as an error, so
+ * normal events cannot scare the streamer or pollute the error channel. */
+function sendNotice(where, message) {
+  const text = String(message).slice(0, 300);
+  appendErrorLog(`notice:${where}`, text);
+  try {
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWin.webContents.send('chat:notice', { where: String(where), message: text });
+    }
+  } catch {
+    /* window gone — notice is still logged */
+  }
+}
+
 /** Rotating error log in userData/logs — attachable to bug reports. One
  * line per error (stack header only, 500-char cap); secrets never reach
  * it (bid-bearing URLs are query-stripped upstream). Rotation: the log
@@ -1255,24 +1534,21 @@ if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // Focus, not just show: a minimized/background panel must come forward.
-    // Guard the splash window: a relaunch during the 2.5s intro must not
-    // create a duplicate panel — the boot timer reveals it already.
-    if (chatWin && !chatWin.isDestroyed()) {
-      if (chatWin.isMinimized()) chatWin.restore();
-      chatWin.show();
-      chatWin.focus();
-    } else if (!splashWin || splashWin.isDestroyed()) {
-      setChatOpen(true); // tray-resident: a relaunch re-opens the panel
-    }
+    // A relaunch while the boot splash is running: the timer reveals the
+    // already-created panel, so do not create a duplicate or show early.
+    if (splashWin && !splashWin.isDestroyed()) return;
+    setChatOpen(true); // show + focus, or create if it was closed
   });
 
   app.whenReady().then(() => {
-    app.setAppUserModelId('ai-assistant.chat-overlay');
+    app.setAppUserModelId(APP_ID);
 
     loadState();
     migrateLegacyEnvConfig();
     registerIpc();
+    // Register before the first page load so did-finish-load can report an
+    // unavailable shortcut accurately.
+    registerGlobalShortcuts();
     // FL-Studio-style intro: the logo splash (~2.5s, screen center,
     // animated) shows first, and the chat panel is created hidden UP FRONT
     // behind it (L-01: a splash load failure can never leave the app
@@ -1291,15 +1567,19 @@ if (!gotLock) {
     if (app.isPackaged && !isPortable) {
       try {
         autoUpdater.autoDownload = true;
-        autoUpdater.on('update-downloaded', () => {
-          reportUnexpected(
-            'update',
-            new Error('an update was downloaded - it installs on the next start'),
-          );
+        // electron-updater is an EventEmitter: an 'error' event with no
+        // listener throws out of the emitter. Update failures are expected
+        // (offline is normal) and must never surface as panel errors.
+        autoUpdater.on('error', (err) => {
+          appendErrorLog('update', (err && err.message) || String(err));
+        });
+        autoUpdater.on('update-downloaded', (info) => {
+          const version = info && info.version ? `v${info.version}` : 'an update';
+          sendNotice('update', `${version} downloaded — it installs on the next start`);
         });
         autoUpdater.checkForUpdatesAndNotify().catch(() => {});
       } catch (err) {
-        reportUnexpected('update-check', err);
+        appendErrorLog('update-check', (err && err.message) || String(err));
       }
     }
   });
@@ -1317,6 +1597,15 @@ if (!gotLock) {
       clearTimeout(saveTimer);
       saveTimer = null;
       writeState();
+    }
+  });
+
+  // Global hotkeys are OS-wide registrations; release them deterministically.
+  app.on('will-quit', () => {
+    try {
+      globalShortcut.unregisterAll();
+    } catch {
+      /* process is already tearing down */
     }
   });
 }

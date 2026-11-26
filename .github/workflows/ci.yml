@@ -25,9 +25,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      # electron lives in devDependencies (electron-builder requirement), so
-      # --omit=dev would audit nothing - audit the full tree instead.
-      - run: npm audit
+      # Block high/critical advisories. The remaining moderate reports are
+      # all minimatch DoS advisories in electron-builder's BUILD-ONLY chain;
+      # the only "fix" is a breaking downgrade of the packager.
+      - run: npm run audit
 
   dist-win:
     needs: build-test
